@@ -26,7 +26,7 @@ class DiscordBot(discord.Client):
 
         self._round_length_seconds = 300
 
-        #!proposals
+        #TODO: implement !proposals
         self._dm_commands = {
             '!seating'  : self._command_seating,
             '!propose'  : self._command_propose,
@@ -37,7 +37,7 @@ class DiscordBot(discord.Client):
             '!rejectall': self._command_rejectall
         }
 
-        #!kick
+        #TODO: implement !kick
         self._admin_commands = {
             '!close'     : self._command_close
         }
@@ -50,17 +50,11 @@ class DiscordBot(discord.Client):
             '!leave'    : self._command_leave
         }
 
-    #def run(self, token):
-        #self.client.run(token)
-        #super().run(token)
-
-    #@self.client.event
     async def on_ready(self):
         print('We have logged in as {0.user}'.format(self))
         await self.guilds[0].channels[0].send('Seat Exchange Bot v0.1')
 
 
-    #@self.client.event
     async def on_message(self, message):
         if message.author == self.user:
             return
