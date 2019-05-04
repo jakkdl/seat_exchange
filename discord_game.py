@@ -1,71 +1,230 @@
 # pragma pylint: disable=missing-docstring
-from dataclasses import dataclass
+from __future__ import annotations
+from typing import List
+from typing import Set
 
 import random
+
+import discord # type: ignore
+
 import game
 
 
 class DiscordGameException(Exception):
     pass
 
-@dataclass
 class Proposal:
-    source_id: int
-    target_id: int
-    #garnets
+    def __init__(self, source, target, garnets=0):
+        self._source: 'Player' = source
+        self._target: 'Player' = target
+        self._garnets: int = garnets
 
-@dataclass
+    @property
+    def source(self):
+        return self._source
+
+    @property
+    def target(self):
+        return self._target
+
+    @property
+    def garnets(self):
+        return self._garnets
+
+    def involves(self, player):
+        return player in (self.source, self.target)
+
+
 class Player:
-    seat: int
-    swapped: bool = False
-    #garnets
+    def __init__(self,
+                 discord_game: DiscordGame,
+                 user: discord.User,
+                 seat: int,
+                 garnets: int = 0):
 
+        self._game = discord_game
+        self._user = user
+        self._seat = seat
+        self._swapped: bool = False
+        self._garnets = garnets
+
+    def __str__(self):
+        return self._user.display_name
+
+    @property
+    def seat(self):
+        return self._seat
+
+    @property
+    def garnets(self):
+        return self._garnets
+
+    @property
+    def number(self):
+        return self._game.number_in_seat(self._seat)
+
+    @property
+    def swapped(self):
+        return self._swapped
+
+    async def send(self, *args, **kwargs):
+        if self._user.id == 573077970445402113:
+            return
+        try:
+            await self._user.send(*args, **kwargs)
+        except discord.errors.Forbidden:
+            print('blocked by {}'.format(self))
+
+
+
+    def matches(self, search_key: str) -> bool:
+        if search_key in (self._user.name, self._user.display_name):
+            return True
+        if search_key.isdigit():
+            if int(search_key) == self._user.id or int(search_key) == self._seat:
+                return True
+        return False
+
+    @property
+    def outgoing_proposals(self) -> List[Proposal]:
+        return [p for p in self._game.proposals if p.source == self]
+
+    @property
+    def incoming_proposals(self) -> List[Proposal]:
+        return [p for p in self._game.proposals if p.target == self]
+
+   # @property
+   # def proposals(self) -> List[Proposal]:
+   #     return [p for p in self._game.proposals if p.involves(self)]
+
+    def add_proposal_to(self, target: Player, garnets: int = 0):
+        for prop in self.outgoing_proposals:
+            if prop.target == target:
+                raise DiscordGameException(
+                    'You already have a proposal to {}'.format(target))
+
+        proposal = Proposal(self, target, garnets)
+
+        self._game.add_proposal(proposal)
+
+    def reject_proposal(self, proposal: Proposal):
+        self._game.remove_proposal(proposal)
+
+    def cancel_proposal(self, proposal: Proposal):
+        self._game.remove_proposal(proposal)
+
+    #returns a list of all proposals canceled, to let the bot notify
+    #the involved players.
+    def cancel_all_proposals(self):
+        proposals = [p for p in self._game.proposals if self in (p.source, p.target)]
+        for proposal in proposals:
+            self._game.remove_proposal(proposal)
+
+        if not self._game.public_swaps:
+            return []
+
+        return proposals
+
+    def accept_incoming_proposal(self, proposal: Proposal) -> List[Proposal]:
+        if self.swapped:
+            raise DiscordGameException(
+                'You have already swapped.')
+
+        if proposal.source.swapped:
+            raise DiscordGameException(
+                'target {} already swapped'.format(proposal.source))
+
+        self._garnets += proposal.garnets
+        proposal.source._garnets -= proposal.garnets
+        self._swap(proposal.source)
+        self._game.remove_proposal(proposal)
+
+        if not self._game.public_swaps:
+            return []
+
+        return (self.cancel_all_proposals()
+                + proposal.source.cancel_all_proposals())
+
+    def _swap(self, target, force=False):
+        self._game.swap_seats(self, target, force)
+
+    def swap_seat(self, seat):
+        self._seat = seat
+        self._swapped = True
+
+    def set_seat(self, seat):
+        self._seat = seat
+
+    def reset_swapped(self):
+        self._swapped = False
+
+    def send_garnets(self, target: Player, amount: int):
+        self.garnets -= amount
+        target.garnets += amount
 
 class DiscordGame:
     def __init__(self):
-        self._seating_to_discord_id = []
+        super().__init__()
+        self._seating_to_player: List[Player] = []
+        self._game: game.Game = game.Game()
+        self._proposals: Set[Proposal] = set()
 
-        self._players = {}
-        self.player_count = 0
-        self._game_running = False
-        self._game = None
-        self._public_swaps = True
-
-        self._proposals = set()
+        self._game_running: bool = False
+        self._public_swaps: bool = True
 
 
-    def get_seat(self, user_id):
-        return self._players[user_id].seat
+    def swap_seats(self, source: Player, target: Player, force=False):
+        if not force:
+            if source.swapped or target.swapped:
+                raise DiscordGameException('swapping swapped players without force')
+        self._game.swap_seats(source.seat, target.seat)
+        self._seating_to_player[source.seat], self._seating_to_player[target.seat] = (
+            self._seating_to_player[target.seat], self._seating_to_player[source.seat])
 
-    def get_number(self, user_id):
-        return self._game.number_in_seat(self.get_seat(user_id))
+        tmp = source.seat
+        source.swap_seat(target.seat)
+        target.swap_seat(tmp)
 
-    def get_player_in_seat(self, seat):
-        return self._seating_to_discord_id[seat]
+    def player_in_seat(self, seat) -> Player:
+        return self._seating_to_player[seat]
+
+    def number_in_seat(self, seat) -> int:
+        return self._game.number_in_seat(seat)
 
     @property
-    def current_x_player(self):
-        return self.get_player_in_seat(self._game.current_x_seat)
+    def proposals(self):
+        return self._proposals
+
+    def add_proposal(self, proposal: Proposal):
+        self._proposals.add(proposal)
+
+    def remove_proposal(self, proposal: Proposal):
+        self._proposals.remove(proposal)
+
+    @property
+    def current_x_player(self) -> Player:
+        return self.player_in_seat(self._game.current_x_seat)
 
     @property
     def current_x(self):
         return self._game.current_x
 
     @property
-    def game_running(self):
+    def running(self):
         return self._game_running
 
-    def have_swapped(self, user_id):
-        return self._players[user_id].swapped
-
     @property
-    def longest_loop(self):
-        return self._game.highest_streak[0]
+    def longest_streak(self):
+        return self._game.longest_streak().longest_streak
 
     @property
     def winners(self):
-        return [(winner.seat, winner.number, self._seating_to_discord_id[winner.seat])
-                for winner in self._game.winners]
+        return [self._seating_to_player[seat]
+                for seat in self._game.winners]
+
+    @property
+    def win_streak_length(self):
+        return self._game.win_streak_length
 
     @property
     def public_swaps(self):
@@ -81,135 +240,51 @@ class DiscordGame:
 
     @property
     def table_layout(self):
-        return self._seating_to_discord_id
+        return self._seating_to_player
 
     # game management
 
-    def add_player(self, user_id):
-        player_count = len(self._players)
-        self._seating_to_discord_id.append(user_id)
-        self._players[user_id] = Player(seat=player_count)
+    def add_player(self, user: discord.User) -> Player:
+        """Add a discord.User to the game with a random seat & number"""
+        seat = self._game.add_seat()
+        player = Player(seat=seat, user=user, discord_game=self)
+        if seat < len(self._seating_to_player):
+            self._seating_to_player.append(
+                self._seating_to_player[seat])
+            self._seating_to_player[seat] = player
+        else:
+            self._seating_to_player.append(player)
+        return player
 
 
 
-    def remove_player(self, user_id):
-        seat = self._players[user_id].seat
+    def remove_player(self, player: Player):
         if self._game_running:
-            self._game.remove_seat(seat)
+            self._game.remove_seat(player.seat)
 
-        self._seating_to_discord_id.pop(seat)
-        for i in self._seating_to_discord_id[seat:]:
-            self._players[i].seat -= 1
+        self._seating_to_player.pop(player.seat)
+        for i in self._seating_to_player[player.seat:]:
+            i.set_seat(i.seat - 1)
 
 
     def start_game(self):
-        self._shuffle_seats()
-        self._game = game.Game(len(self._players))
+        self._shuffle_players_in_seats()
+        self._game.shuffle()
+        self._game_running = True
 
-    def _shuffle_seats(self):
-        random.shuffle(self._seating_to_discord_id)
+    def stop_game(self):
+        self._game_running = False
 
-        for user_id, player in self._players.items():
-            player.seat = self._seating_to_discord_id.index(user_id)
+    def _shuffle_players_in_seats(self):
+        random.shuffle(self._seating_to_player)
+
+        players = self._seating_to_player.copy()
+
+        for player in players:
+            player.set_seat(self._seating_to_player.index(player))
 
     def new_round(self):
         self._proposals = set()
         self._game.new_round()
-
-
-    # proposal and swapping functions
-
-    def get_outgoing_proposals(self, user_id):
-        if user_id not in self._players:
-            raise DiscordGameException('invalid user_id')
-        return [p.target for p in self._proposals if p.source == user_id]
-
-    def get_incoming_proposals(self, user_id):
-        if user_id not in self._players:
-            raise DiscordGameException('invalid user_id')
-        return [p.source for p in self._proposals if p.target == user_id]
-
-    def add_outgoing_proposal(self, source, target):
-        if source not in self._players:
-            raise DiscordGameException('invalid source')
-
-        if target not in self._players:
-            raise DiscordGameException('invalid target')
-
-        proposal = Proposal(source, target)
-
-        if proposal in self._proposals:
-            raise DiscordGameException(
-                'proposal {} already in _proposals'.format(
-                    proposal))
-
-        self._proposals.add(proposal)
-
-    def cancel_proposal(self, source_id, target_id):
-        if source_id not in self._players:
-            raise DiscordGameException(
-                'invalid source_id')
-
-        proposal = Proposal(source_id, target_id)
-
-        if proposal not in self._proposals:
-            raise DiscordGameException(
-                'cannot find proposal {}'.format(
-                    proposal))
-
-        self._proposals.remove(proposal)
-
-    #returns a list of all proposals canceled, to let the bot notify
-    #the involved players.
-    def cancel_all_proposals(self, user_id):
-        proposals = [p for p in self._proposals if user_id in (p.source, p.target)]
-        for proposal in proposals:
-            self._proposals.remove(proposal)
-
-        if not self.public_swaps:
-            return []
-
-        return proposals
-
-    def accept_incoming_proposal(self, source, target):
-        if source not in self._players:
-            raise DiscordGameException('invalid source {}'.format(source))
-
-        if target not in self._players:
-            raise DiscordGameException('invalid target {}'.format(target))
-
-        if self._players[source].swapped:
-            raise DiscordGameException(
-                'target {} already swapped'.format(target))
-
-        if self._players[target].swapped:
-            raise DiscordGameException(
-                'target {} already swapped'.format(target))
-
-        proposal = Proposal(source, target)
-
-        if proposal not in self._proposals:
-            raise DiscordGameException(
-                'proposal {} not in _proposals'.format(
-                    proposal))
-
-        self._swap_players(source, target)
-        self._proposals.remove(proposal)
-
-        if not self.public_swaps:
-            return []
-
-        return (self.cancel_all_proposals(source)
-                + self.cancel_all_proposals(target))
-
-    def _swap_players(self, source_user_id, target_user_id, force=False):
-        source = self._players[source_user_id]
-        target = self._players[target_user_id]
-        if not force:
-            if source.swapped or target.swapped:
-                raise DiscordGameException('swapping swapped players without force')
-        self._game.swap_seats(source.seat, target.seat)
-        source.seat, target.seat = target.seat, source.seat
-
-        source.swapped = True
-        target.swapped = True
+        for player in self._seating_to_player:
+            player.reset_swapped()
