@@ -33,11 +33,10 @@ class DiscordBot(discord.Client):
 
     def __init__(self):
         super().__init__()
-        self._game: discord_game.DiscordGame = None
+        self._game: discord_game.DiscordGame = discord_game.DiscordGame()
         self._players: Dict[discord.User, Player] = {}
         self._game_channel: discord.TextChannel = None
         self._game_started: float = 0.0
-        self._game_created = False
 
         self._round_length: int = 300
 
@@ -86,7 +85,6 @@ class DiscordBot(discord.Client):
             '!commands' : self._public_command_commands,
             '!source'   : self._public_command_source,
             '!players'  : self._public_command_players,
-            '!create'   : self._command_create,
             '!join'     : self._command_join,
         }
 
@@ -120,9 +118,14 @@ class DiscordBot(discord.Client):
     async def _parse_command(self, command, parameters: List[str], author, channel):
         if command in self._admin_commands:
             #TODO: if admin
-            await self._admin_commands[command](parameters,
-                                                author,
-                                                channel)
+            for role in author.roles:
+                if role.name == 'game admin':
+                    await self._admin_commands[command](parameters,
+                                                        author,
+                                                        channel)
+                    break
+            else:
+                raise DiscordBotException('Unauthorized.')
 
         elif isinstance(channel, discord.TextChannel):
             if command in self._public_commands:
@@ -187,7 +190,7 @@ class DiscordBot(discord.Client):
             await self._command_join(parameters, member, channel)
 
     async def _command_start(self, _parameters: List[str], _player: Player, _channel):
-        if self._game.running:
+        if self._game_started:
             raise DiscordBotException(
                 'Game already running.')
 
@@ -211,20 +214,17 @@ class DiscordBot(discord.Client):
             print('finished sleep')
             # game canceled, quit silently
 
-            # another game was created in the meantime
+            # another game was started in the meantime, or game got canceled
             if game_started != self._game_started:
-                print('quitting silently, another game started')
-                return
-
-            if not self._game.running:
-                print('Game canceled.')
+                print('quitting silently, another game started or we got canceled.')
                 return
 
             # Game Over
             if not self._game.new_round():
                 self._game_started = 0.0
-                self._game_created = False
                 await self._message_game_over()
+                self._game = discord_game.DiscordGame(self._game.options)
+                self._players = {}
                 return
 
             # Otherwise, continue with next round and loop
@@ -240,7 +240,7 @@ class DiscordBot(discord.Client):
                 'send proposals. Trying to accept a proposal involving a swapped player will '
                 'notify both players.')
         return (
-            '```Current options'
+            '```Current options\n'
             '{swap_info_str}\n'
             'Players who are part of the winning streak will gain {o[win_garnets]} garnets.\n'
             'All players will start with {o[start_garnets]} garnets.\n'
@@ -435,26 +435,12 @@ class DiscordBot(discord.Client):
                                      channel): #pylint: disable=unused-argument
         await channel.send('https://github.com/h00701350103/seat_exchange')
 
-    async def _command_create(self, _parameters: List[str], _player: Player, channel):
-        if self._game_created:
-            raise DiscordBotException('Game already exists')
-
-        self._game = discord_game.DiscordGame()
-        self._game_channel = channel
-        self._game_created = True
-        self._players = {}
-        await channel.send('Game created in this channel. Type `!join` to join')
-
     async def _command_destroy(self, _parameters: List[str], _player: Player, channel):
-        if not self._game:
-            raise DiscordBotException("Game doesn't exists")
-        if not self._game_created:
-            raise DiscordBotException("Game doesn't exist")
 
-        self._game.stop_game()
         self._game_started = 0.0
-        self._game_created = False
-        await channel.send('Game destroyed.')
+        self._players = {}
+        self._game = discord_game.DiscordGame(self._game.options)
+        await channel.send('Game canceled.')
 
     async def _command_forceseatnumbers(self, _parameters: List[str], _player: Player, channel):
         await channel.send('```Seat Number\n'
@@ -466,14 +452,14 @@ class DiscordBot(discord.Client):
                            ])))
 
     async def _command_join(self, _parameters: List[str], author, channel):
-        if not self._game:
-            raise DiscordBotException(
-                'No game exists.')
+        if self._game_started:
+            raise DiscordBotException('Cannot join game in progress.')
 
         if author in self._players: #compares ids
             raise DiscordBotException(
                 '{} already joined'.format(author.display_name))
 
+        self._game_channel = channel
         self._players[author] = self._game.add_player(author)
 
         print('{0.name} has joined with id {0.id}'.format(author))
@@ -485,7 +471,7 @@ class DiscordBot(discord.Client):
                 'Error: {} has not joined.'.format(player))
 
         #send message asking for confirmation in the form of emoji reaction to message.
-        if self._game.running:
+        if self._game_started:
             raise DiscordBotException(
                 'Error: cannot leave game in progress (WIP)'
             )
@@ -541,6 +527,10 @@ class DiscordBot(discord.Client):
 
 
     async def _command_propose(self, parameters: List[str], player: Player):
+        if not self._game_started:
+            raise DiscordBotException(
+                'Error: game is not running')
+
         if not parameters:
             raise DiscordBotException(
                 'Error: please provide the id, seat, name or display name of a player '
@@ -557,9 +547,6 @@ class DiscordBot(discord.Client):
             raise DiscordBotException(
                 "Error: can't propose to yourself.")
 
-        if not self._game.running:
-            raise DiscordBotException(
-                'Error: game is not running')
 
         if player.swapped and self._game.options['public_swaps']:
             raise DiscordBotException(
@@ -691,7 +678,7 @@ class DiscordBot(discord.Client):
                 '{} has already swapped this round. Proposal canceled.'.format(proposal.source))
 
 
-        canceled_proposals = player.accept_incoming_proposal(proposal)
+        proposal.accept()
 
         if self._game.options['public_swaps']:
             other_proposals_string = '\nAll your other proposals have been canceled.'
@@ -729,12 +716,13 @@ class DiscordBot(discord.Client):
             random.shuffle(swappers)
             await self._game_channel.send(
                 '{0} have swapped with {1}.\n'
-                '{0} is now in seat {0.seat}, '
+                '{0} is now in seat {0.seat}.\n'
                 '{1} is now in seat {1.seat}.'.format(
                     swappers[0],
                     swappers[1]))
 
-            for prop in canceled_proposals:
+            for prop in player.proposals + proposal.source.proposals:
+                prop.cancel()
                 if prop.source not in (proposal.source, player):
                     proposer = prop.source
                     rejecter = prop.target

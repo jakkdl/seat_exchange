@@ -49,6 +49,15 @@ class Proposal:
         return self._garnets
 
     def accept(self):
+        if self._target.swapped:
+            raise DiscordGameException(
+                'You have already swapped.')
+
+        if self._source.swapped:
+            raise DiscordGameException(
+                'target {} already swapped'.format(self._source))
+
+        self._target.swap(self._source)
         self._target.garnets += self._garnets
         self._game.proposals.remove(self)
 
@@ -109,6 +118,10 @@ class Player:
         return False
 
     @property
+    def proposals(self) -> List[Proposal]:
+        return [p for p in self._game.proposals if self in (p.source, p.target)]
+
+    @property
     def outgoing_proposals(self) -> List[Proposal]:
         return [p for p in self._game.proposals if p.source == self]
 
@@ -124,37 +137,7 @@ class Player:
 
         return Proposal(self, target, self._game, garnets)
 
-    #returns a list of all proposals canceled, to let the bot notify
-    #the involved players.
-    def cancel_all_proposals(self):
-        proposals = [p for p in self._game.proposals if self in (p.source, p.target)]
-        for proposal in proposals:
-            proposal.cancel()
-
-        if not self._game.public_swaps:
-            return []
-
-        return proposals
-
-    def accept_incoming_proposal(self, proposal: Proposal) -> List[Proposal]:
-        if self.swapped:
-            raise DiscordGameException(
-                'You have already swapped.')
-
-        if proposal.source.swapped:
-            raise DiscordGameException(
-                'target {} already swapped'.format(proposal.source))
-
-        self._swap(proposal.source)
-        proposal.accept()
-
-        if not self._game.public_swaps:
-            return []
-
-        return (self.cancel_all_proposals()
-                + proposal.source.cancel_all_proposals())
-
-    def _swap(self, target, force=False):
+    def swap(self, target, force=False):
         self._game.swap_seats(self, target, force)
 
     def swap_seat(self, seat):
@@ -178,14 +161,11 @@ class DiscordGame:
         self.proposals: Set[Proposal] = set()
         self._game: game.Game = game.Game()
 
-        self._game_running: bool = False
-        self._public_swaps: bool = True
-
         self.options: Dict = {
             'public_swaps': True,
             'win_garnets': 10,
             'x_garnets': -10,
-            'start_garnets': 10,
+            'start_garnets': 20,
             #'x_count': len(self._game.current_x),
             'round_length': 120
         }
@@ -225,10 +205,6 @@ class DiscordGame:
         return self._game.current_x
 
     @property
-    def running(self):
-        return self._game_running
-
-    @property
     def longest_streak(self):
         return self._game.longest_streak().longest_streak
 
@@ -253,8 +229,6 @@ class DiscordGame:
 
     def add_player(self, user: discord.User) -> Player:
         """Add a discord.User to the game with a random seat & number"""
-        if self.running:
-            raise DiscordGameException('unimplemented')
         seat = self._game.add_seat()
         player = Player(seat=seat, user=user, discord_game=self)
         if seat < len(self._seating_to_player):
@@ -280,10 +254,6 @@ class DiscordGame:
             player.garnets = self.options['start_garnets']
         self._shuffle_players_in_seats()
         self._game.shuffle()
-        self._game_running = True
-
-    def stop_game(self):
-        self._game_running = False
 
     def _shuffle_players_in_seats(self):
         random.shuffle(self._seating_to_player)
@@ -309,5 +279,4 @@ class DiscordGame:
             player.garnets += self.options['win_garnets']
         for player in self.current_x_players:
             player.garnets += self.options['x_garnets']
-        self._game_running = False
         return False
