@@ -15,54 +15,42 @@ class DiscordGameException(Exception):
 
 class Proposal:
     def __init__(self, source: Player, target: Player, discord_game: DiscordGame, garnets: int = 0):
-        self._source: 'Player' = source
-        self._target: 'Player' = target
-        self._garnets: int = garnets
+        self.source: 'Player' = source
+        self.target: 'Player' = target
+        self.garnets: int = garnets
         self._game = discord_game
 
         #lock up garnets until canceled
         if garnets < 0:
             raise DiscordGameException(
                 'Garnet amount must be non-negative')
-        if self._source.garnets < garnets:
+        if self.source.garnets < garnets:
             raise DiscordGameException(
                 "Can't create proposal, insufficient garnets")
-        self._source.garnets -= garnets
+        self.source.garnets -= garnets
         self._game.proposals.add(self)
 
     def __str__(self):
         return 'Proposal from {} to {} offering {} garnets'.format(
-            self._source,
-            self._target,
-            self._garnets)
-
-    @property
-    def source(self) -> Player:
-        return self._source
-
-    @property
-    def target(self) -> Player:
-        return self._target
-
-    @property
-    def garnets(self) -> int:
-        return self._garnets
+            self.source,
+            self.target,
+            self.garnets)
 
     def accept(self):
-        if self._target.swapped:
+        if self.target.swapped:
             raise DiscordGameException(
                 'You have already swapped.')
 
-        if self._source.swapped:
+        if self.source.swapped:
             raise DiscordGameException(
-                'target {} already swapped'.format(self._source))
+                'target {} already swapped'.format(self.source))
 
-        self._target.swap(self._source)
-        self._target.garnets += self._garnets
+        self.target.swap(self.source)
+        self.target.garnets += self.garnets
         self._game.proposals.remove(self)
 
     def cancel(self):
-        self._source.garnets += self._garnets
+        self.source.garnets += self.garnets
         self._game.proposals.remove(self)
 
 
@@ -72,15 +60,18 @@ class Proposal:
 class Player:
     def __init__(self,
                  discord_game: DiscordGame,
-                 user: discord.User,
-                 seat: int,
+                 discord_user: discord.User,
+                 seat: int = -1,
                  garnets: int = 0):
 
         self._game = discord_game
-        self.user = user
+        self.user = discord_user
         self._seat = seat
         self._swapped: bool = False
         self.garnets = garnets
+        self.assigned_numbers: Dict[Player, int] = {}
+
+        self.botswaps: List[Proposal] = []
 
     def __str__(self):
         return self.user.display_name
@@ -147,12 +138,48 @@ class Player:
     def set_seat(self, seat):
         self._seat = seat
 
+    def new_round(self):
+        pass
+
     def reset_swapped(self):
         self._swapped = False
 
-    def send_garnets(self, target: Player, amount: int):
+    async def donate_garnets(self, target: Player, amount: int):
         self.garnets -= amount
         target.garnets += amount
+
+        await target.received_garnets(self, amount)
+
+    async def received_garnets(self, donater: Player, amount: int):
+        pass
+
+class BotPlayer(Player):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def send(self, *args, **kwargs):
+        pass
+
+    def new_round(self):
+        print('botplayer new round called')
+        proposals = self.incoming_proposals
+
+
+        if proposals:
+            random.shuffle(proposals)
+
+            proposal = max(proposals, key=lambda x: x.garnets)
+
+            try:
+                proposal.accept()
+            except DiscordGameException:
+                pass
+
+        super().new_round()
+
+    async def received_garnets(self, donater: Player, amount: int):
+        await donater.send('{} thanks you for your kind donation, their number is {}.'
+                           ''.format(self, self.number))
 
 class DiscordGame:
     def __init__(self, options: Dict = {}): #pylint: disable=dangerous-default-value
@@ -162,12 +189,12 @@ class DiscordGame:
         self._game: game.Game = game.Game()
 
         self.options: Dict = {
-            'public_swaps': True,
+            'public_swaps': False,
             'win_garnets': 10,
             'x_garnets': -10,
             'start_garnets': 20,
             #'x_count': len(self._game.current_x),
-            'round_length': 120
+            'round_length': 600
         }
         for option in options:
             if option in self.options:
@@ -227,17 +254,18 @@ class DiscordGame:
 
     # game management
 
-    def add_player(self, user: discord.User) -> Player:
-        """Add a discord.User to the game with a random seat & number"""
+    def add_player(self, player: Player):
+        """Add a Player to the game with a random seat & number"""
         seat = self._game.add_seat()
-        player = Player(seat=seat, user=user, discord_game=self)
+        player.set_seat(seat)
+        #player = Player(seat=seat, user=user, discord_game=self)
+
         if seat < len(self._seating_to_player):
             self._seating_to_player.append(
                 self._seating_to_player[seat])
             self._seating_to_player[seat] = player
         else:
             self._seating_to_player.append(player)
-        return player
 
 
 
@@ -264,12 +292,17 @@ class DiscordGame:
             player.set_seat(self._seating_to_player.index(player))
 
     def new_round(self) -> bool:
+
+        for player in self._seating_to_player:
+            player.new_round()
+        for player in self._seating_to_player:
+            player.reset_swapped()
+            player.botswaps = []
+
         old_proposals = self.proposals.copy()
         for proposal in old_proposals:
             proposal.cancel()
         self.proposals = set()
-        for player in self._seating_to_player:
-            player.reset_swapped()
 
         if not self._game.game_over:
             self._game.new_round()

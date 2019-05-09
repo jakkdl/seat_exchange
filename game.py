@@ -99,6 +99,10 @@ class Game:
             self._win_streak_length = 3
             return
 
+        if count == 8:
+            self._win_streak_length = 4
+            return
+
         self._win_streak_length = math.floor((self.player_count-1)/2)
 
 
@@ -132,14 +136,17 @@ class Game:
 
     @property
     def game_over(self) -> bool:
+        print('game over 0')
         if self.player_count < 4:
             return True
         res = self.longest_streak()
 
+        print('game over 1')
+
         if (self.player_count == self._win_streak_length
                 and res.longest_streak == self._win_streak_length):
             return True
-
+        print(res.longest_streak, self._win_streak_length, res.instances)
         return res.longest_streak == self._win_streak_length and res.instances == 1
 
     def _adjacent_numbers(self, first, second, delta) -> bool:
@@ -204,7 +211,8 @@ class Game:
     def shuffle(self):
         """algorithm always works on n > 8. Never works on n < 6.
         n=6 - 9.5% fail rate. n=7 1.8%, n=8 0.3%.
-        so on those we retry until succesful."""
+        We *could* just retry until we succeed, but instead I wrote an
+        entirely new function to build the seating."""
         def consecutive(first, second):
             first_number = self._seat_numbers[first % self.player_count]
             second_number = self._seat_numbers[second % self.player_count]

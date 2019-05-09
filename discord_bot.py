@@ -4,12 +4,14 @@ from typing import List
 
 import random
 import asyncio
+import math
 
 import discord # type: ignore
 
 import discord_game
 from discord_game import Player
 from discord_game import Proposal
+from discord_game import BotPlayer
 
 #TODO: police nickname changes
 
@@ -17,7 +19,9 @@ from discord_game import Proposal
 class DiscordBotException(Exception):
     pass
 
-
+WIKIPEDIA_URL = (
+    'https://en.wikipedia.org/wiki/The_Genius:_Rule_Breaker'
+    '#Episode_2:_Seat_Exchange_(12_Contestants)')
 
 # pylint: disable=too-many-instance-attributes
 # The commands variables are sorta ugly, but I can't make them static
@@ -27,7 +31,7 @@ class DiscordBot(discord.Client):
     #placing them out here makes pylint happy, and feels better
     #but doesn't work with mypy
     #self._admin_commands = {
-        #'!close'     : _command_close
+        #'!forcequit'     : _command_forcequit
     #}
 
 
@@ -38,54 +42,65 @@ class DiscordBot(discord.Client):
         self._game_channel: discord.TextChannel = None
         self._game_started: float = 0.0
 
-        self._round_length: int = 300
-
         #TODO: implement !kick
         self._admin_commands = {
             #!kick
             #!forcenextround - impossible?
-            '!close'     : self._command_close,
+            '!forcequit'     : self._command_forcequit,
             '!forcejoin' : self._command_forcejoin,
             '!forcejoinall' : self._command_forcejoinall,
-            '!destroy'   : self._command_destroy,
+            '!forceleave'       : self._command_forceleave,
+            '!forcestop'   : self._command_forcestop,
             '!forceseatnumbers' : self._command_forceseatnumbers,
             '!admincommands' : self._command_admincommands
         }
 
-        self._dm_commands = {
-            '!help'     : self._dm_command_commands,
-            '!commands' : self._dm_command_commands,
+
+
+        self._dm_player_commands = {
             '!incoming' : self._command_incoming,
             '!outgoing' : self._command_outgoing,
             '!seating'  : self._command_seating,
             '!garnets'  : self._command_garnets,
+            '!garnet'   : self._command_garnets,
 
+            '!assign'   : self._command_assign,
             '!donate'   : self._command_donate,
+
+        #   '!botswap'  : self._command_botswap,
+        #   '!cancelbotswaps' : self._command_cancelall_botswaps,
 
             '!propose'  : self._command_propose,
             '!cancel'   : self._command_cancel,
             '!cancelall': self._command_cancelall,
             '!accept'   : self._command_accept,
             '!reject'   : self._command_reject,
-            '!rejectall': self._command_rejectall
+            '!rejectall': self._command_rejectall,
         }
 
-
-        #!stop
-        self._player_commands = {
-            '!start'    : self._command_start,
-            '!leave'    : self._command_leave,
-            '!setoption': self._command_setoption,
-            '!getoptions': self._command_getoptions
+        self._public_player_commands = {
+            '!start'     : self._command_start,
+            '!stop'      : self._command_stop,
+            '!leave'     : self._command_leave,
+            '!setoption' : self._command_setoption,
+            '!getoptions': self._command_getoptions,
 
         }
 
         self._public_commands = {
             '!help'     : self._public_command_help,
             '!commands' : self._public_command_commands,
+            '!command'  : self._public_command_commands,
             '!source'   : self._public_command_source,
             '!players'  : self._public_command_players,
             '!join'     : self._command_join,
+        }
+
+        self._dm_commands = {
+            '!help'     : self._dm_command_help,
+            '!command'  : self._dm_command_commands,
+            '!rules'    : self._dm_command_rules,
+            '!source'   : self._dm_command_source,
         }
 
     async def on_ready(self):
@@ -115,6 +130,25 @@ class DiscordBot(discord.Client):
             await message.channel.send(
                 'Error in game engine: {}'.format(error))
 
+    async def on_reaction_add(self, reaction, _user):
+        print('reaction added')
+        message = reaction.message
+        if message.content != '!stop':
+            return
+
+        if not self._game_started:
+            print('game not started')
+            return
+
+        if message.created_at.timestamp() < self._game_started:
+            print('old message, {} < {}'.format(
+                message.created_at.timestamp(), self._game_started))
+            return
+
+        if reaction.count >= len(self._players)//2:
+            await self._game_channel.send('Game stopped.')
+            self._stop_game()
+
     async def _parse_command(self, command, parameters: List[str], author, channel):
         if command in self._admin_commands:
             #TODO: if admin
@@ -128,47 +162,60 @@ class DiscordBot(discord.Client):
                 raise DiscordBotException('Unauthorized.')
 
         elif isinstance(channel, discord.TextChannel):
-            if command in self._public_commands:
-                await self._public_commands[command](parameters,
-                                                     author,
-                                                     channel)
-            elif command in self._player_commands:
-                if author not in self._players:
-                    raise DiscordBotException(
-                        'Error: {} not a player in a current game.'.format(author))
-                await self._player_commands[command](parameters,
-                                                     self._players[author],
-                                                     channel)
-
-            elif command in self._dm_commands:
-                raise DiscordBotException(
-                    'Command {} not allowed in this channel.'.format(command))
-
-            else:
-                raise DiscordBotException(
-                    'Unknown command {}.'.format(command))
+            await self._parse_public_command(command, parameters, author, channel)
 
         elif isinstance(channel, discord.DMChannel):
-            if command in self._dm_commands:
-                if author not in self._players:
-                    raise DiscordBotException(
-                        'Error: {} not a player in a current game.'.format(author))
-                await self._dm_commands[command](parameters, self._players[author])
-
-            elif command in self._public_commands:
-                raise DiscordBotException(
-                    'Command {} not allowed in this channel.'.format(command))
-
-            else:
-                raise DiscordBotException('Unknown command {}'.format(
-                    command))
+            await self._parse_dm_command(command, parameters, author)
 
 
         else:
             raise DiscordBotException(
                 'Channel not supported.')
 
-    async def _command_close(self, _parameters: List[str], _author, channel):
+    async def _parse_public_command(self, command: str, parameters: List[str],
+                                    author, channel):
+        if command in self._public_commands:
+            await self._public_commands[command](parameters,
+                                                 author,
+                                                 channel)
+        elif command in self._public_player_commands:
+            if author not in self._players:
+                raise DiscordBotException(
+                    'Error: {} not a player in a current game.'.format(author))
+            await self._public_player_commands[command](
+                parameters,
+                self._players[author],
+                channel)
+        elif (command in self._dm_player_commands
+              or command in self._dm_commands):
+            raise DiscordBotException(
+                'Command `{}` only allowed in direct messages.'.format(command))
+
+        else:
+            raise DiscordBotException(
+                'Unknown command `{}`.'.format(command))
+
+    async def _parse_dm_command(self, command: str, parameters: List[str],
+                                author):
+        if command in self._dm_player_commands:
+            if author not in self._players:
+                raise DiscordBotException(
+                    'Error: {} not a player in a current game.'.format(author))
+            await self._dm_player_commands[command](parameters, self._players[author])
+
+        elif command in self._dm_commands:
+            await self._dm_commands[command](parameters, author)
+
+        elif (command in self._public_commands
+              or command in self._public_player_commands):
+            raise DiscordBotException(
+                'Command `{}` only allowed in public game channel.'.format(command))
+
+        else:
+            raise DiscordBotException('Unknown command `{}`'.format(
+                command))
+
+    async def _command_forcequit(self, _parameters: List[str], _author, channel):
         await channel.send('closing...')
         print('closing...\n\n')
         await self.close()
@@ -185,11 +232,22 @@ class DiscordBot(discord.Client):
                 ' '.join(parameters)))
 
 
+    async def _command_forceleave(self, parameters, _author, channel):
+        for player in self._players.values():
+            if player.matches(' '.join(parameters)):
+                await self._command_leave(parameters, player, channel)
+                break
+        else:
+            raise DiscordBotException('Invalid player {}'.format(
+                ' '.join(parameters)))
+
+
+
     async def _command_forcejoinall(self, parameters: List[str], _author, channel):
         for member in channel.guild.members:
             await self._command_join(parameters, member, channel)
 
-    async def _command_start(self, _parameters: List[str], _player: Player, _channel):
+    async def _command_start(self, parameters: List[str], player: Player, _channel):
         if self._game_started:
             raise DiscordBotException(
                 'Game already running.')
@@ -219,15 +277,98 @@ class DiscordBot(discord.Client):
                 print('quitting silently, another game started or we got canceled.')
                 return
 
+            self._resolve_botswaps()
+
             # Game Over
             if not self._game.new_round():
-                self._game_started = 0.0
+                await self._command_forceseatnumbers(parameters, player, self._game_channel)
                 await self._message_game_over()
-                self._game = discord_game.DiscordGame(self._game.options)
-                self._players = {}
+                self._stop_game()
                 return
 
             # Otherwise, continue with next round and loop
+
+
+    def _resolve_botswaps(self):
+        def highest_proposal_bribe(player: Player, botswap) -> int:
+            def get_value(proposal: Proposal) -> int:
+                print('get value', proposal.source.swapped, proposal.target.swapped, proposal ==
+                      botswap)
+                if proposal.source.swapped or proposal.target.swapped or proposal == botswap:
+                    return 0
+                return proposal.garnets
+
+            proposal = max(player.incoming_proposals,
+                           key=get_value,
+                           default=None)
+            if proposal:
+                return proposal.garnets
+            return 0
+
+
+        botswaps = []
+
+        #get all botswaps from players
+        for player in self._players.values():
+            for botswap in player.botswaps:
+                botswaps.append((player, botswap,))
+
+        print("len(botswaps): {}".format(len(botswaps)))
+
+        random.shuffle(botswaps)
+
+        #sort them by largest garnets first
+        botswaps.sort(key=lambda x: -x[1].garnets)
+
+        for player, botswap in botswaps:
+            print(botswap.garnets, highest_proposal_bribe(botswap.source, botswap),
+                  highest_proposal_bribe(botswap.target, botswap))
+            if botswap.source == botswap.target:
+                print('same-swap')
+                if botswap.garnets > highest_proposal_bribe(botswap.source, botswap):
+                    try:
+                        botswap.accept()
+                        botswap.source.garnets += botswap.garnets
+                        player.garnets -= botswap.garnets
+
+                    except discord_game.DiscordGameException as e:
+                        print(botswap, e)
+
+
+            if (botswap.garnets > highest_proposal_bribe(botswap.source, botswap)
+                    + highest_proposal_bribe(botswap.target, botswap)):
+                try:
+                    sgarnets = botswap.source.garnets
+                    tgarnets = botswap.target.garnets
+                    print('bsw', sgarnets, tgarnets, player.garnets, botswap.garnets)
+                    botswap.accept()
+                    botswap.source.garnets = sgarnets + math.ceil(botswap.garnets*1.5)
+                    botswap.target.garnets = tgarnets + math.floor(botswap.garnets/2)
+                    player.garnets -= botswap.garnets
+                    print('bsw', sgarnets, tgarnets, player.garnets)
+                except discord_game.DiscordGameException as e:
+                    print(botswap, e)
+
+
+
+
+
+
+
+
+    #TODO: wants the message
+    async def _command_stop(self, _parameters: List[str], _player: Player, channel):
+        if not self._game_started:
+            raise DiscordBotException('Game not started')
+
+        await channel.send('If {} people react with a single emoji to the `!stop` message '
+                           'the game will be stopped'.format(
+                               len(self._players)//2))
+
+    def _stop_game(self):
+        self._game_started = 0.0
+        self._game = discord_game.DiscordGame(self._game.options)
+        self._players = {}
 
     def _current_options_string(self):
         if self._game.options['public_swaps']:
@@ -291,12 +432,13 @@ class DiscordBot(discord.Client):
             if not self._game.current_x:
                 message_current_x = ''
             elif len(self._game.current_x) == 1:
-                message_current_x = 'Number {current_x} is X.\n'.format(
+                message_current_x = 'The new X is {current_x}.\n'.format(
                     current_x=self._game.current_x[0])
             else:
-                message_current_x = 'The following numbers are X: {current_x}.\n'.format(
+                message_current_x = 'The following numbers are now X: {current_x}.\n'.format(
                     current_x=' '.join(self._game.current_x))
 
+            print(player)
             await player.send(
                 '**Round {current_round} started.**\n'
                 'All your proposals have been canceled\n'
@@ -316,7 +458,8 @@ class DiscordBot(discord.Client):
             '**Round {current_round} started.**\n'
             '```Seat  Player\n'
             '{table_layout}```\n'
-            'The longest streak is {streak}.\n'
+            "The game didn't finish last round with the old X value.\n"
+            'With the new X the longest streak is {streak}.\n'
             'Streak required to win is {win_streak_length}.\n'
             '{message_current_x}' .format(
                 current_round=self._game.current_round,
@@ -383,9 +526,81 @@ class DiscordBot(discord.Client):
                                      _player: Player, channel): #pylint: disable=unused-argument
         await channel.send('`' + '` `'.join(self._admin_commands.keys()) + '`')
 
+    async def _dm_command_help(self, _parameters: List[str],
+                               player: Player): #pylint: disable=unused-argument
+        await player.send(
+            'Type `!help` to see this help text.\n'
+            'Type `!rules` for an overview and explanation on how the game works.\n'
+            'Type `!commands` for a list of the commands available through direct messages.\n'
+            'Most of the commands are only available to players that have joined the game.\n'
+            'Knowing the rules, most of the commands should be self-explanatory, and they will '
+            "give helpful error messages if you're invoking them incorrectly.\n"
+            'Help for individual commands is not yet implemented, so you will have to experiment '
+            'or ask :).'
+        )
+
+    async def _dm_command_source(self, _parameters: List[str],
+                                 player: Player): #pylint: disable=unused-argument
+        await player.send('https://github.com/h00701350103/seat_exchange')
+
     async def _dm_command_commands(self, _parameters: List[str],
                                    player: Player): #pylint: disable=unused-argument
-        await player.send('`' + '` `'.join(self._dm_commands.keys()) + '`')
+        await player.send(
+            'Command list for private messages:\n'
+            'General commands: `{general}`\n'
+            'Player-only commands: `{player}`'.format(
+                general='` `'.join(self._dm_commands.keys()),
+                player='` `'.join(self._dm_player_commands.keys())
+            )
+        )
+
+    async def _dm_command_rules(self, _parameters: List[str], player: Player):
+        await player.send(
+            'This game is based on a main match from the korean reality show The Genius.\n'
+            'Rules for that version can be found at {url}.\n'
+            "There's some minor differences in this implementation, but the idea is the same.\n"
+            'Each player is imagined to be sitting in a circle, on seats numbered from 0.\n'
+            'Each seat is adjacent to two other seats, wrapping around at the beginning and end.\n'
+            'Every player is also assigned a secret number, from 0 up to the number of players-1.\n'
+            'The game ends when a specific amount of players, depending on the total number of '
+            'players, is seated such that their secret numbers are in increasing or decreasing '
+            'order.\n'
+            'The game only ends if there is *one* such streak, and it may not be longer '
+            'than the specified length.\n'
+            '\n'
+            'At the start of the game, each player gains {start_garnets} garnets, '
+            'which is the currency of the game.\n'
+            'Players forming the winning streak are rewarded with {win_garnets} garnets by '
+            'default.\n'
+            '\n'
+            'There is also one number assigned to be **X**, by default it starts as 0 '
+            'and increases by one each round.\n'
+            'The number that is X cannot be part of a streak, and you skip this number when '
+            'calculating a streak.\n'
+            'For example if X=3, 2 and 4 are considered adjacent and can form a streak.\n'
+            'When the game ends, the player that holds the number currently assigned X loses '
+            '{lose_garnets} garnets.\n'
+            '\n'
+            'At the beginning of each round the length of the longest streak is announced.\n'
+            'This can be used to keep track of other players, or figure out their secret number.\n'
+            '\n'
+            'During each round players can propose to swap seats with another player, optionally '
+            'bribing them with a few garnets as well.\n'
+            'You can also donate garnets to other players, this is inteded to be used for non-'
+            'binding proposals.\n'
+            'You can only swap seats once per round.\n'
+            'By default all seat swaps are announced publicly, but this may be disable.\n'
+            'The ultimate objective of the game is to end the game with as many garnets '
+            'as possible.\n'
+            ''.format(
+                url=WIKIPEDIA_URL,
+                start_garnets=self._game.options['start_garnets'],
+                win_garnets=self._game.options['win_garnets'],
+                lose_garnets=self._game.options['x_garnets']*-1
+            )
+
+        )
+
 
     async def _command_incoming(self, _parameters: List[str],
                                 player: Player): #pylint: disable=unused-argument
@@ -403,24 +618,34 @@ class DiscordBot(discord.Client):
         await player.send('\n'.join([str(p) for p in player.outgoing_proposals]))
 
     async def _command_seating(self, _parameters: List[str], player: Player):
-        await player.send('```{}```'.format(self._get_table_layout_string()))
+        #def _get_table_layout_string(self):
+        #I'm sorry
+        seat_string = ''
+        for seat in range(len(self._players)):
+            target = self._game.player_in_seat(seat)
+            number = player.assigned_numbers.get(target, '')
+            seat_string += '{0:>3} {1:>4}  {2}\n'.format(
+                seat,
+                number,
+                target)
+        await player.send('```{}```'.format(seat_string))
 
     async def _command_garnets(self, _parameters: List[str], player: Player):
         await player.send('You have {} garnets.'.format(player.garnets))
 
-    async def _public_command_help(self, _parameters: List[str], _player: Player,
-                                   channel): #pylint: disable=unused-argument
-        await channel.send('https://en.wikipedia.org/wiki/The_Genius:_Rule_Breaker'
-                           '#Episode_2:_Seat_Exchange_(12_Contestants)\n'
-                           'Type `!commands` for list of commands.')
+    async def _public_command_help(self, parameters: List[str], author: discord.User,
+                                   channel):
+        await channel.send('Information sent in a private message.\n'
+                           'Type `!commands` for list of public commands.')
+        await self._dm_command_help(parameters, author)
 
-    async def _public_command_commands(self, _parameters: List[str], _player: Player,
-                                       channel): #pylint: disable=unused-argument
+    async def _public_command_commands(self, _parameters: List[str], _author: discord.User,
+                                       channel):
         await channel.send('`' + '` `'.join(
-            list(self._public_commands.keys()) + list(self._player_commands.keys())) + '`')
+            list(self._public_commands.keys()) + list(self._public_player_commands.keys())) + '`')
 
-    async def _public_command_players(self, _parameters: List[str], _player: Player,
-                                      channel): #pylint: disable=unused-argument
+    async def _public_command_players(self, _parameters: List[str], _author: discord.User,
+                                      channel):
         if not self._game:
             await channel.send('No game exists.')
             return
@@ -431,11 +656,11 @@ class DiscordBot(discord.Client):
                            '{}```'.format('\n'.join([
                                str(p) for p in self._game.players])))
 
-    async def _public_command_source(self, _parameters: List[str], _player: Player,
+    async def _public_command_source(self, _parameters: List[str], _author: discord.User,
                                      channel): #pylint: disable=unused-argument
         await channel.send('https://github.com/h00701350103/seat_exchange')
 
-    async def _command_destroy(self, _parameters: List[str], _player: Player, channel):
+    async def _command_forcestop(self, _parameters: List[str], _player: Player, channel):
 
         self._game_started = 0.0
         self._players = {}
@@ -445,9 +670,11 @@ class DiscordBot(discord.Client):
     async def _command_forceseatnumbers(self, _parameters: List[str], _player: Player, channel):
         await channel.send('```Seat Number\n'
                            '{}```'.format('\n'.join([
-                               '{seat:>3} {number:>3}'.format(
+                               '{seat:>3} {number:>3} {player}'.format(
                                    seat=seat,
-                                   number=self._game.number_in_seat(seat))
+                                   number=self._game.number_in_seat(seat),
+                                   player=self._game.player_in_seat(seat)
+                               )
                                for seat in range(len(self._players))
                            ])))
 
@@ -459,11 +686,27 @@ class DiscordBot(discord.Client):
             raise DiscordBotException(
                 '{} already joined'.format(author.display_name))
 
+        if author.bot:
+            player = BotPlayer(discord_user=author,
+                               discord_game=self._game)
+        else:
+            player = Player(discord_user=author,
+                            discord_game=self._game)
+
+        print(author, player)
         self._game_channel = channel
-        self._players[author] = self._game.add_player(author)
+        self._players[author] = player
+        self._game.add_player(player)
 
         print('{0.name} has joined with id {0.id}'.format(author))
         await channel.send('{} has joined'.format(author.display_name))
+
+    async def _command_kick(self, parameters, _author, _channel):
+        player = self._find_player(' '.join(parameters))
+
+        self._game.remove_player(player)
+        self._players.pop(player.user)
+        await self._game_channel.send('{} has been kicked from the game.'.format(player))
 
     async def _command_leave(self, _parameters: List[str], player: Player, channel):
         if player not in self._players.values(): #compares ids
@@ -492,6 +735,14 @@ class DiscordBot(discord.Client):
         raise DiscordBotException(
             'Error: cannot find any matches for {}'.format(search_key))
 
+    def _find_member(self, search_key: str) -> Player:
+        for player in self._players.values():
+            if player.matches(search_key):
+                return player
+
+        raise DiscordBotException(
+            'Error: cannot find any matches for {}'.format(search_key))
+
     async def _command_donate(self, parameters: List[str], player: Player):
         if len(parameters) < 2:
             raise DiscordBotException(
@@ -510,7 +761,7 @@ class DiscordBot(discord.Client):
             raise DiscordBotException(
                 'Invalid garnet amount {}.'.format(parameters[-1]))
 
-        player.send_garnets(target, garnets)
+        await player.donate_garnets(target, garnets)
 
         await player.send('You have sent {garnets} garnets to {target}.\n'
                           'You now have {player.garnets} garnets.'.format(
@@ -524,7 +775,88 @@ class DiscordBot(discord.Client):
                               player=player))
 
 
+    async def _command_assign(self, parameters: List[str], player: Player):
+        if not self._game_started:
+            raise DiscordBotException(
+                'Error: game is not running')
 
+        if not parameters:
+            raise DiscordBotException(
+                'Error: please specify <player/seat> and number.\n'
+                'Example: `!assign jakkdl 5`.')
+
+        target = self._find_player(' '.join(parameters[:-1]))
+
+        if not parameters[-1].isdigit():
+            raise DiscordBotException(
+                'Error: {} is not a valid number'.format(parameters[-1])
+            )
+
+       #if player == target:
+       #    raise DiscordBotException(
+       #        "Error: can't assign yourself")
+
+        digit = int(parameters[-1])
+        player.assigned_numbers[target] = digit
+
+        await player.send('{} assigned to {}'.format(digit, target))
+
+    async def _command_botswap(self, parameters: List[str], player: Player):
+        if not self._game_started:
+            raise DiscordBotException(
+                'Error: game is not running')
+
+        if not parameters or 'with' not in parameters:
+            raise DiscordBotException(
+                'Error: please specify bots and number in the following format.\n'
+                '`!assign <bot> with <bot> <garnets>`\n'
+                'Example: `!botswap Seat Exchange Bot with necro_score_bot 5`.')
+
+
+        if not parameters[-1].isdigit():
+            raise DiscordBotException(
+                'Error: invalid garnet amount {}'.format(parameters[-1])
+            )
+
+        garnets = int(parameters[-1])
+
+        with_index = parameters.index('with')
+
+        source = self._find_player(' '.join(parameters[:with_index]))
+
+        target = self._find_player(' '.join(parameters[with_index+1:-1]))
+
+
+        if not source.user.bot:
+            raise DiscordBotException(
+                'Error: {} is not a bot.'.format(source))
+
+        if not target.user.bot:
+            raise DiscordBotException(
+                'Error: {} is not a bot.'.format(target))
+
+        player.botswaps.append(Proposal(source, target, self._game, garnets))
+
+        if source == target:
+            await player.send('Bribed {} to not swap with {} garnets.'.format(
+                source, garnets))
+
+        else:
+            await player.send('Proposed botswap with {} and {} '
+                              'with a total bribe of {} garnets.'.format(
+                                  source, target, garnets))
+
+
+    async def _command_cancelall_botswaps(self, _parameters: List[str], player: Player):
+        if not self._game_started:
+            raise DiscordBotException(
+                'Error: game is not running')
+
+        if not player.botswaps:
+            raise DiscordBotException(
+                'Error: you have no active botswaps proposed.')
+
+        player.botswaps = []
 
     async def _command_propose(self, parameters: List[str], player: Player):
         if not self._game_started:
@@ -552,17 +884,14 @@ class DiscordBot(discord.Client):
             raise DiscordBotException(
                 'Error: you have already swapped seats this round')
 
-        if self._game.options['public_swaps'] and target.swapped:
+        if target.swapped and self._game.options['public_swaps']:
             raise DiscordBotException(
                 'Error: {} have already swapped seats this round.'.format(
                     target))
 
         if len(parameters) > 1 and garnet_bribe:
-            if parameters[-1].isdigit():
+            if parameters[-1].isdigit() and int(parameters[-1]) >= 0:
                 garnets = int(parameters[-1])
-                if garnets < 0:
-                    raise DiscordBotException(
-                        'Error: non-negative amount of garnets')
             else:
                 raise DiscordBotException('invalid amount of garnets {}'.format(parameters[1]))
         else:
