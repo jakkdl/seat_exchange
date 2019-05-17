@@ -122,10 +122,6 @@ class CommandType():
     def matches(self, key: str) -> bool:
         return key in self.command_name_list
 
-    # def valid / fills requirements
-    # that way we can have several commands matching the same commandmessage
-    # but only execute the one that's valid.
-
     async def execute(self, command: CommandMessage) -> None:
         if self.requirements.admin_only and not command.author_is_admin:
             raise CommandException(self,

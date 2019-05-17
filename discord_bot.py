@@ -2,13 +2,11 @@
 from typing import Dict, List
 
 import discord  # type: ignore
-from discord import TextChannel
 
 from discord_game import DiscordGame
 
 import seat_commands as commands
 
-# from strings import WIKIPEDIA_URL, RULES_STR
 from seat_typing import SeatException
 
 # TODO: police nickname changes
@@ -18,49 +16,11 @@ class DiscordBotException(SeatException):
     pass
 
 
-# pylint: disable=too-many-instance-attributes
-# The commands variables are sorta ugly, but I can't make them static
-# as they refer to self. If anybody reading this has a tip, hit me up.
 class DiscordBot(discord.Client):  # type: ignore
     def __init__(self) -> None:
         super().__init__()
-        self.games: Dict[TextChannel, DiscordGame] = {}
+        self.games: Dict[discord.TextChannel, DiscordGame] = {}
         self.players: Dict[discord.user, DiscordGame] = {}
-
-        # TODO: implement !kick
-        # self._admin_commands = {
-        # !kick
-        # !forcenextround - impossible?
-        # '!forcequit':        self._command_forcequit,
-        # '!forcejoin':        self._command_forcejoin,
-        # '!forcejoinall':     self._command_forcejoinall,
-        # '!forceleave':       self._command_forceleave,
-        # '!forcestop':        self._command_forcestop,
-        # '!forceseatnumbers': self._command_forceseatnumbers,
-        # '!admincommands':    self._command_admincommands
-        # }
-
-        # self._public_player_commands = {
-        # '!stop':         self._command_stop,
-        # '!leave':        self._command_leave,
-        # '!setoption':    self._command_setoption,
-        # '!getoptions':   self._command_getoptions,
-        # }
-
-        # self._public_commands = {
-        # '!help':         self._public_command_help,
-        # '!command':      self._public_command_commands,
-        # '!commands':     self._public_command_commands,
-        # '!source':       self._public_command_source,
-        # }
-
-        # self._dm_commands = {
-        # '!help':         self._dm_command_help,
-        # '!command':      self._dm_command_commands,
-        # '!commands':     self._dm_command_commands,
-        # '!rules':        self._dm_command_rules,
-        # '!source':       self._dm_command_source,
-        # }
 
         command_list = (
             commands.Ready(self.games),
@@ -87,10 +47,6 @@ class DiscordBot(discord.Client):  # type: ignore
                     self.command_dict[command_name] = [command]
                 else:
                     self.command_dict[command_name].append(command)
-
-        # TODO
-        self._dm_player_commands = (
-            DiscordGame(None).dm_player_commands.keys())
 
     async def on_ready(self) -> None:
         print('We have logged in as {0.user}'.format(self))
@@ -121,22 +77,46 @@ class DiscordBot(discord.Client):  # type: ignore
             print(errors)
             await message.channel.send('\n'.join(str(x) for x in errors))
 
-            return
+    #
+    # Old code that will be reimplemented in other places slightly different
+    #
 
-        # try:
-        #     await self._parse_command(command, parameters, message.author,
-        #                               message.channel)
+    #    self._dm_player_commands = (
+    #        DiscordGame(None).dm_player_commands.keys())
+    # !kick
+    # self._admin_commands = {
+    # !kick
+    # !forcenextround - impossible?
+    # '!forcequit':        self._command_forcequit,
+    # '!forcejoin':        self._command_forcejoin,
+    # '!forcejoinall':     self._command_forcejoinall,
+    # '!forceleave':       self._command_forceleave,
+    # '!forcestop':        self._command_forcestop,
+    # '!forceseatnumbers': self._command_forceseatnumbers,
+    # '!admincommands':    self._command_admincommands
+    # }
 
-        # except DiscordBotException as error:
-        #     print(error)
-        #     await message.channel.send(error)
-        # except DiscordGameException as error:
-        #     print(error)
-        #     await message.channel.send(error)
-        # except PlayerGameException as error:
-        #     print(error)
-        #     await message.channel.send(
-        #         'Error in game engine: {}'.format(error))
+    # self._public_player_commands = {
+    # '!stop':         self._command_stop,
+    # '!leave':        self._command_leave,
+    # '!setoption':    self._command_setoption,
+    # '!getoptions':   self._command_getoptions,
+    # }
+
+    # self._public_commands = {
+    # '!help':         self._public_command_help,
+    # '!command':      self._public_command_commands,
+    # '!commands':     self._public_command_commands,
+    # '!source':       self._public_command_source,
+    # }
+
+    # self._dm_commands = {
+    # '!help':         self._dm_command_help,
+    # '!command':      self._dm_command_commands,
+    # '!commands':     self._dm_command_commands,
+    # '!rules':        self._dm_command_rules,
+    # '!source':       self._dm_command_source,
+    # }
 
     # async def on_reaction_add(self, reaction, _user):  # TODO
     #     print('reaction added')
