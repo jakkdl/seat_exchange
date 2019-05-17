@@ -58,7 +58,13 @@ class Proposal:
         self.source.garnets += self.garnets
 
 
-class Player:
+class Findable:  # pylint: disable=too-few-public-methods
+    @classmethod
+    def find(cls, search_key: str, game: PlayerGame) -> Findable:
+        raise NotImplementedError('Virtual method matches.')
+
+
+class Player(Findable):
     """A player in a discord game.
 
     Much of the commands interface directly with the public methods,
@@ -73,6 +79,18 @@ class Player:
         self._seat: Seat = seat
         self._swapped: bool = False
         self.garnets = garnets
+
+    @classmethod
+    def find(cls, search_key: str, game: PlayerGame) -> Player:
+        for player in game.players:
+            if player.matches(search_key):
+                if isinstance(player, cls):
+                    return player
+                raise PlayerGameException(
+                    'Error: Found {} which is a {} and not a {}.'.format(
+                        player, type(player).__name__, cls.__name__))
+        raise PlayerGameException(
+            'Error: Found no player matching `{}`.'.format(search_key))
 
     @property
     def seat(self) -> Seat:
@@ -143,8 +161,8 @@ class Player:
         raise PlayerGameException('Pure virtual method')
 
     # Subclasses uses self so can't make it a function
-    def matches(self, search_key: str) -> bool:  # pylint: disable=no-self-use
-        raise PlayerGameException('Pure virtual method')
+    def matches(self, search_key: str) -> bool:
+        raise NotImplementedError('Virtual method matches.')
 
 
 class PlayerGame:

@@ -35,15 +35,12 @@ class DiscordBot(discord.Client):  # type: ignore
         # '!forcejoin':        self._command_forcejoin,
         # '!forcejoinall':     self._command_forcejoinall,
         # '!forceleave':       self._command_forceleave,
-        # '!forcestart':        self._command_forcestart,
         # '!forcestop':        self._command_forcestop,
         # '!forceseatnumbers': self._command_forceseatnumbers,
         # '!admincommands':    self._command_admincommands
         # }
 
         # self._public_player_commands = {
-        # '!ready':        self._command_ready,
-        # '!unready':      self._command_unready,
         # '!stop':         self._command_stop,
         # '!leave':        self._command_leave,
         # '!setoption':    self._command_setoption,
@@ -55,8 +52,6 @@ class DiscordBot(discord.Client):  # type: ignore
         # '!command':      self._public_command_commands,
         # '!commands':     self._public_command_commands,
         # '!source':       self._public_command_source,
-        # '!players':      self._public_command_players,
-        # '!join':         self._command_join,
         # }
 
         # self._dm_commands = {
@@ -74,6 +69,11 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.Join(self.games),
             commands.CreateJoin(self.games),
             commands.RecreateJoin(self.games),
+
+            commands.Leave(self.games),
+
+            commands.AddBot(self.games),
+            commands.RemoveBot(self.games),
 
             commands.Shutdown(self),
             commands.ForceStart(self.games),
@@ -286,36 +286,6 @@ class DiscordBot(discord.Client):  # type: ignore
     #            await self._command_join(parameters, member, channel)
     #        except DiscordBotException:
     #            pass
-
-    # async def _command_ready(self,
-    #                          _parameters: List[str],
-    #                          player: Player,
-    #                          _channel):
-    #     """Sets player to be ready.
-
-    #     Triggering chain reaction that may start the game.
-    #     Assumes that player is valid and in a game."""
-    #     player.ready()
-
-    # async def _command_unready(self,
-    #                            _parameters: List[str],
-    #                            player: Player,
-    #                            _channel):
-    #     """Sets player to be unready.
-
-    #     If start countdown has started this will cancel that.
-    #     Assumes that player is valid and in a game."""
-    #     player.unready()
-
-    # async def _command_forcestart(self,
-    #                               _parameters: List[str],
-    #                               _player: Player,
-    #                               channel):
-    #     if channel not in self.games:
-    #         raise DiscordBotException(
-    #             'No game in this channel')
-
-    #     await self.games[channel].start()
 
     # def _resolve_botswaps(self):
     #     def highest_proposal_bribe(player: Player, botswap) -> int:
@@ -555,36 +525,6 @@ class DiscordBot(discord.Client):  # type: ignore
     #                            )
     #                            for seat in range(len(game.players))
     #                        ])))
-
-    # async def _command_join(self, _parameters: List[str], author, channel):
-    #     if channel not in self.games:
-    #         self.games[channel] = DiscordGame(channel, {})
-    #         await channel.send('Creating new game in {}'.format(channel))
-
-    #     elif self.games[channel].game_over or self.games[channel].stopped:
-    #         self.games[channel] = DiscordGame(
-    #             channel,
-    #             self.games[channel].game.options)
-    #         await channel.send('Restarting new game with the same options.')
-
-    #     elif self.games[channel].running:
-    #         raise DiscordBotException(
-    #             'Error: {} cannot join game in progress'.format(author))
-
-    #     for game in self.games.values():
-    #         if author in game.players:  # TODO
-    #             raise DiscordBotException(
-    #                 'Error: {} already joined a game in {}.'.format(
-    #                     author.display_name, game.channel))
-
-    #     self.games[channel].add_player(
-    #         Player(discord_user=author,
-    #                discord_game=self.games[channel].game))
-
-    #     self.players[author] = self.games[channel]
-
-    #     print('{0.name} has joined {1}'.format(author, channel))
-    #     await channel.send('{} has joined'.format(author.display_name))
 
     # async def _command_kick(self, parameters, _author, channel):
     #     if channel not in self.games:

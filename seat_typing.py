@@ -5,8 +5,6 @@ from typing import NewType, cast
 PrivateNumber = NewType("PrivateNumber", int)
 
 
-# class PrivateNumber(int):
-#     pass
 class SeatException(Exception):
     pass
 

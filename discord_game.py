@@ -43,6 +43,11 @@ class DiscordPlayer(Player):
     def __str__(self) -> str:
         return cast(str, self.user.display_name)
 
+    @classmethod
+    def find(cls, search_key: str, game: PlayerGame) -> DiscordPlayer:
+        return cast(DiscordPlayer,
+                    super(DiscordPlayer, cls).find(search_key, game))
+
     def matches(self, search_key: str) -> bool:
         if search_key.lower() in (self.user.name.lower(),
                                   self.user.display_name.lower()):
@@ -78,7 +83,12 @@ class BotPlayer(Player):
         self.name = name
 
     def __str__(self) -> str:
-        return self.name
+        return self.name.title()
+
+    @classmethod
+    def find(cls, search_key: str, game: PlayerGame) -> BotPlayer:
+        return cast(BotPlayer,
+                    super(BotPlayer, cls).find(search_key, game))
 
     def matches(self, search_key: str) -> bool:
         return search_key.lower() == self.name.lower()
@@ -141,7 +151,7 @@ class DiscordGame:
         self.channel: discord.TextChannel = channel
         self.game = PlayerGame(options)
         self.discord_players: Dict[discord.User, DiscordPlayer] = {}
-        self.bots: List[BotPlayer] = []
+        self.bots: Dict[str, BotPlayer] = {}
         self.botswaps: List[BotSwap] = []
         self.state: GameState = GameState.CREATED
 
@@ -175,21 +185,25 @@ class DiscordGame:
                                 **kwargs)
 
     async def ready(self, author: DiscordPlayer) -> None:
-        if self.state != GameState.CREATED:
-            raise DiscordGameException('Invalid game state.')
         if author.ready:
             raise DiscordGameException('{} already ready.'.format(author))
         author.ready = True
 
         await self.send('{} ready.'.format(author))
 
-        for player in self.discord_players.values():
-            if not player.ready:
-                break
-        else:
+        if self._all_players_ready():
             await self.start_game_countdown()
 
+    def _all_players_ready(self) -> bool:
+        for player in self.discord_players.values():
+            if not player.ready:
+                return False
+        return True
+
     async def start_game_countdown(self, timer: int = 10) -> None:
+        if self.player_count < 2:
+            return
+
         self.state = GameState.STARTING
 
         await self.send('Starting game in {} seconds.'.format(timer))
@@ -207,8 +221,6 @@ class DiscordGame:
         await self.start()
 
     async def unready(self, author: DiscordPlayer) -> None:
-        if self.state not in (GameState.CREATED, GameState.STARTING):
-            raise DiscordGameException('Invalid game state.')
         if not author.ready:
             raise DiscordGameException("{} player already unready.")
         author.ready = False
@@ -223,7 +235,7 @@ class DiscordGame:
     def players(self) -> Generator[Player, None, None]:
         for player in self.discord_players.values():
             yield player
-        for bot in self.bots:
+        for bot in self.bots.values():
             yield bot
 
     @property
@@ -249,11 +261,6 @@ class DiscordGame:
         return self.state == GameState.STOPPED
 
     async def start(self) -> None:
-        if self.player_count < 2:
-            raise DiscordGameException(
-                'Insufficient number of players: {}'.format(
-                    self.player_count))
-
         if self.state not in (GameState.CREATED, GameState.STARTING):
             raise DiscordGameException(
                 'Error: Invalid game state: {}'.format(self.state))
@@ -303,23 +310,32 @@ class DiscordGame:
         self._round_loop()
 
     async def add_player(self, user: discord.user) -> None:
+        if self.state == GameState.STARTING:
+            self.state = GameState.CREATED
+
         player = DiscordPlayer(user, self.game)
         self.discord_players[user] = player
         self.game.add_player(player)
         await self.send('{} joined the game'.format(player))
 
-    def remove_player(self, player: DiscordPlayer) -> None:
-        # TODO: Should this one take a Player?
+    async def remove_player(self, player: DiscordPlayer) -> None:
         self.discord_players.pop(player.user)
         self.game.remove_player(player)
+        await self.send('{} left the game'.format(player))
 
-    def add_bot(self, name: str) -> None:
+        if self._all_players_ready():
+            await self.start_game_countdown()
+
+    async def add_bot(self, name: str) -> None:
         bot = BotPlayer(name, self.game)
-        self.bots.append(bot)
+        self.bots[name] = bot
         self.game.add_player(bot)
+        await self.send('Bot player {} added to the game'.format(bot))
 
-    def remove_bot(self, name: str) -> None:
-        pass  # TODO: take name, Player or BotPlayer?
+    async def remove_bot(self, bot: BotPlayer) -> None:
+        self.bots.pop(bot.name)
+        self.game.remove_player(bot)
+        await self.send('Bot player {} removed from the game'.format(bot))
 
     def _current_options_string(self) -> str:
         if self.game.options['public_swaps']:

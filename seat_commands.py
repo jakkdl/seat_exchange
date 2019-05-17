@@ -2,21 +2,23 @@
 """
 from __future__ import annotations
 
-from typing import Dict, Container, Optional, Union
+from typing import Dict, Container, Optional, Union, List, Any, Sequence, cast
 from dataclasses import dataclass
 
 import discord  # type: ignore
 
-from discord_game import DiscordPlayer, DiscordGame, GameState
+from discord_game import DiscordPlayer, DiscordGame, GameState, BotPlayer
+from player_game import Findable, PlayerGame
 from seat_typing import SeatException
 
 GameDict = Dict[discord.TextChannel, DiscordGame]
 
 
 class CommandException(SeatException):
-    def __init__(self, command: CommandType, message: str):
+    def __init__(self, command: Union[CommandType, CommandMessage],
+                 message: str):
         super().__init__('Error running `{}`: {}'.format(
-            command.command_name, message))
+            command, message))
 
 
 class CommandMessage:
@@ -24,10 +26,13 @@ class CommandMessage:
     def __init__(self, message: discord.message) -> None:
         self._message = message
 
-        self.author = message.author
+        self.author: discord.User = message.author
         self.channel = message.channel
-        self.command = message.content.split(' ')[0][1:]
-        self.args = message.content.split(' ')[1:]
+        self.command: str = message.content.split(' ')[0][1:]
+        self.args: List[Any] = message.content.split(' ')[1:]
+
+    def __str__(self) -> str:
+        return self.command
 
     @property
     def author_is_admin(self) -> bool:
@@ -35,6 +40,27 @@ class CommandMessage:
             if role.name.lower() == 'game admin':
                 return True
         return False
+
+    def convert_arguments(self,
+                          arg_types: Sequence[type],
+                          game: Optional[PlayerGame] = None) -> None:
+        if len(arg_types) != len(self.args):
+            raise CommandException(self, 'Invalid number of arguments.')
+        new_args: List[Any] = []
+        for arg, arg_type in zip(self.args, arg_types):
+            try:
+                if issubclass(arg_type, Findable):
+                    assert game
+                    new_args.append(arg_type.find(arg, game))
+                else:
+                    # Gives "Too many arguments for "object" without cast
+                    new_args.append(cast(type, arg_type)(arg))
+
+            except ValueError:
+                raise CommandException(self, 'Invalid type for argument {}. '
+                                       'Not convertible to {}'.format(
+                                           arg, arg_type))
+        self.args = new_args
 
 
 @dataclass
@@ -56,12 +82,17 @@ class CommandType():
                  *command_names: str,
                  games: Optional[GameDict] = None,
                  requirements: Requirements = Requirements(),
+                 args: Sequence[type] = (),
                  help_text: str = 'This command has no help text.'
                  ) -> None:
         self.command_name_list = (command_name,) + command_names
         self.games = games
-        self.help_text = help_text
         self.requirements = requirements
+        self.args = args
+        self.help_text = help_text
+
+    def __str__(self) -> str:
+        return self.command_name
 
     @property
     def command_name(self) -> str:
@@ -111,6 +142,7 @@ class CommandType():
                         self, 'You are a player in an active game.')
 
         if not self.game_only:
+            command.convert_arguments(self.args)
             await self._do_execute(command)
             return
 
@@ -118,6 +150,8 @@ class CommandType():
 
         if not game:
             raise CommandException(self, 'Found no game.')
+
+        command.convert_arguments(self.args, game.game)
 
         self._validate_game_state(game.state)
 
@@ -241,6 +275,25 @@ class Unready(CommandType):
         await game.unready(player)
 
 
+class Leave(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = 'Leave a game. Cannot leave a game in progress.'
+        requirements = Requirements(
+            player_only=True,
+            valid_game_states=[GameState.CREATED,
+                               GameState.STARTING])
+        super().__init__('leave',
+                         games=games,
+                         requirements=requirements,
+                         help_text=help_text)
+
+    async def _do_game_player_execute(self,
+                                      command: CommandMessage,
+                                      game: DiscordGame,
+                                      player: DiscordPlayer) -> None:
+        await game.remove_player(player)
+
+
 # Join commands
 class CreateJoin(CommandType):
     def __init__(self, games: GameDict) -> None:
@@ -343,7 +396,8 @@ class ForceStart(CommandType):
 
 class ListPlayers(CommandType):
     def __init__(self, games: GameDict) -> None:
-        requirements = Requirements(game_only=True)
+        requirements = Requirements(
+            game_only=True)
         help_text = ('List players that have joined.')
         super().__init__('players', 'listplayers',
                          games=games,
@@ -352,5 +406,52 @@ class ListPlayers(CommandType):
 
     async def _do_game_execute(self, command: CommandMessage,
                                game: DiscordGame) -> None:
+        if not list(game.players):
+            game.send('No players joined.')
+            return
+
         await game.send('```', *game.players,
                         sep='\n', end='```')
+
+
+class AddBot(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        requirements = Requirements(
+            game_only=True,
+            public_only=True,
+            valid_game_states=[GameState.CREATED])
+        args = (str,)
+        help_text = ('Add a bot with the specified name to the game.')
+        super().__init__('addbot',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text)
+
+    async def _do_game_execute(self, command: CommandMessage,
+                               game: DiscordGame) -> None:
+        name = cast(str, command.args[0])
+        if not name.isalnum() or not name[0].isalpha():
+            raise CommandException(
+                self, 'Give the bot a proper name!')
+
+        await game.add_bot(name.lower())
+
+
+class RemoveBot(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        requirements = Requirements(
+            game_only=True,
+            public_only=True,
+            valid_game_states=[GameState.CREATED])
+        args = (BotPlayer,)
+        help_text = ('Remove the specified bot from the game.')
+        super().__init__('removebot',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text)
+
+    async def _do_game_execute(self, command: CommandMessage,
+                               game: DiscordGame) -> None:
+        await game.remove_bot(command.args[0])
