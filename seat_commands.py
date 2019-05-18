@@ -2,23 +2,50 @@
 """
 from __future__ import annotations
 
-from typing import Dict, Container, Optional, Union, List, Any, Sequence, cast
+import itertools
+import typing
+from typing import Container, Optional, List, Any, Sequence, cast
 from dataclasses import dataclass
 
 import discord  # type: ignore
 
 from discord_game import DiscordPlayer, DiscordGame, GameState, BotPlayer
-from player_game import Findable, PlayerGame
+from player_game import Findable, PlayerGame, Player
 from seat_typing import SeatException
 
-GameDict = Dict[discord.TextChannel, DiscordGame]
+from strings import RULES_STR, WIKIPEDIA_URL
+
+GameDict = typing.Dict[discord.TextChannel, DiscordGame]
 
 
 class CommandException(SeatException):
-    def __init__(self, command: Union[CommandType, CommandMessage],
+    def __init__(self, command: typing.Union[CommandType, CommandMessage],
                  message: str):
         super().__init__('Error running `{}`: {}'.format(
             command, message))
+
+
+class ArgType:
+    def __init__(self, arg_type: type,
+                 optional: bool = False) -> None:
+        self.arg_type: type = arg_type
+        self.optional: bool = optional
+
+    def __str__(self) -> str:
+        if self.optional:
+            return '[{}]'.format(self.arg_type)
+        return str(self.arg_type)
+
+    def convert(self, arg: str, game: Optional[PlayerGame] = None) -> Any:
+        if arg == '' and self.optional:
+            return None
+
+        if issubclass(self.arg_type, Findable):
+            assert game
+            return self.arg_type.find(arg, game)
+
+        # Gives "Too many arguments for "object" without cast
+        return cast(type, self.arg_type)(arg)
 
 
 class CommandMessage:
@@ -31,6 +58,9 @@ class CommandMessage:
         self.command: str = message.content.split(' ')[0][1:]
         self.args: List[Any] = message.content.split(' ')[1:]
 
+        self.game: Optional[DiscordGame] = None
+        self.player: Optional[DiscordPlayer] = None
+
     def __str__(self) -> str:
         return self.command
 
@@ -42,19 +72,25 @@ class CommandMessage:
         return False
 
     def convert_arguments(self,
-                          arg_types: Sequence[type],
+                          arg_types: Sequence[ArgType],
                           game: Optional[PlayerGame] = None) -> None:
-        if len(arg_types) != len(self.args):
-            raise CommandException(self, 'Invalid number of arguments.')
+        if len(self.args) > len(arg_types):
+            raise CommandException(self, 'Too many arguments.')
+
+        if len(self.args) < len([x for x in arg_types if not x.optional]):
+            raise CommandException(self, 'Too few arguments.')
+
         new_args: List[Any] = []
-        for arg, arg_type in zip(self.args, arg_types):
+        for arg, arg_type in itertools.zip_longest(
+                self.args, arg_types, fillvalue=''):
             try:
-                if issubclass(arg_type, Findable):
-                    assert game
-                    new_args.append(arg_type.find(arg, game))
-                else:
-                    # Gives "Too many arguments for "object" without cast
-                    new_args.append(cast(type, arg_type)(arg))
+                new_args.append(arg_type.convert(arg, game))
+                # if issubclass(arg_type, Findable):
+                #     assert game
+                #     new_args.append(arg_type.find(arg, game))
+                # else:
+                #     # Gives "Too many arguments for "object" without cast
+                #     new_args.append(cast(type, arg_type)(arg))
 
             except ValueError:
                 raise CommandException(self, 'Invalid type for argument {}. '
@@ -82,7 +118,7 @@ class CommandType():
                  *command_names: str,
                  games: Optional[GameDict] = None,
                  requirements: Requirements = Requirements(),
-                 args: Sequence[type] = (),
+                 args: Sequence[ArgType] = (),
                  help_text: str = 'This command has no help text.'
                  ) -> None:
         self.command_name_list = (command_name,) + command_names
@@ -109,8 +145,8 @@ class CommandType():
         return self.requirements.player_only
 
     def _validate_channel(self,
-                          channel: Union[discord.TextChannel,
-                                         discord.DMChannel]) -> None:
+                          channel: typing.Union[discord.TextChannel,
+                                                discord.DMChannel]) -> None:
         # channel can also be group dm
         if (self.requirements.public_only
                 and not isinstance(channel, discord.TextChannel)):
@@ -151,8 +187,10 @@ class CommandType():
 
         self._validate_game_state(game.state)
 
+        command.game = game
+
         if not self.player_only:
-            await self._do_game_execute(command, game)
+            await self._do_execute(command)
             return
 
         player = self._find_player(command.author)
@@ -167,9 +205,9 @@ class CommandType():
                 self,
                 'You are already a player in a different active game')
 
-        await self._do_game_player_execute(
-            command, game,
-            game.discord_players[command.author])
+        command.player = player
+
+        await self._do_execute(command)
 
     def _find_game(self, command: CommandMessage) -> Optional[DiscordGame]:
         assert self.games is not None
@@ -200,19 +238,9 @@ class CommandType():
             raise CommandException(self, 'Invalid game state.')
 
     async def _do_execute(self, command: CommandMessage) -> None:
-        raise CommandException(self,
-                               'Called execute in the abstract base class.')
-
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
-        raise CommandException(self,
-                               'Called execute in the abstract base class.')
-
-    async def _do_game_player_execute(self, command: CommandMessage,
-                                      game: DiscordGame,
-                                      player: DiscordPlayer) -> None:
-        raise CommandException(self,
-                               'Called execute in the abstract base class.')
+        raise NotImplementedError(
+            '{}: Called do_execute in the abstract '
+            'base class.'.format(command.command))
 
 
 # Player commands
@@ -233,14 +261,13 @@ class Ready(CommandType):
             help_text=help_text
         )
 
-    async def _do_game_player_execute(self,
-                                      command: CommandMessage,
-                                      game: DiscordGame,
-                                      player: DiscordPlayer) -> None:
-        if player.ready:
-            raise CommandException(self,
-                                   '{} already ready.'.format(player))
-        await game.ready(player)
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.player
+        assert command.game
+        if command.player.ready:
+            raise CommandException(
+                self, '{} already ready.'.format(command.player))
+        await command.game.ready(command.player)
 
 
 class Unready(CommandType):
@@ -260,15 +287,138 @@ class Unready(CommandType):
                          help_text=help_text
                          )
 
-    async def _do_game_player_execute(self,
-                                      command: CommandMessage,
-                                      game: DiscordGame,
-                                      player: DiscordPlayer) -> None:
-        if not player.ready:
-            raise CommandException(self,
-                                   '{} already unready.'.format(
-                                       player))
-        await game.unready(player)
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.player
+        assert command.game
+
+        if not command.player.ready:
+            raise CommandException(
+                self, '{} already unready.'.format(command.player))
+        await command.game.unready(command.player)
+
+
+class Propose(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = (
+            'Propose a seat swap with another player, optionally bundling '
+            'a bribe of garnets.')
+        requirements = Requirements(
+            player_only=True,
+            private_only=True,
+            valid_game_states=[GameState.RUNNING])
+        args = (ArgType(Player),
+                ArgType(int, optional=True))
+        super().__init__('propose',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        assert command.player
+
+        target: Player = command.args[0]
+        garnets = command.args[1] if command.args[1] is not None else 0
+
+        if command.player == target:
+            raise CommandException(self, 'Cannot swap with yourself.')
+
+        # TODO: public swaps
+
+        command.player.add_proposal_to(target, garnets)
+
+        await command.player.send(
+            'Proposal sent to {target} offering {garnets} garnets.\n'
+            'Those garnets are locked up until either player cancels the '
+            'proposal.\n'
+            'You now have {player.garnets} garnets.\n'
+            'You can cancel the proposal with `!cancel.`'.format(
+                target=target,
+                garnets=garnets,
+                player=command.player))
+
+        await target.send(
+            'Proposal received from {player} offering {garnets}.'.format(
+                player=command.player,
+                garnets=garnets))
+
+
+class CancelProposal(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = (
+            'Cancel an outgoing proposal. If you have multiple proposals you '
+            'must specify to which player the proposal is.')
+        requirements = Requirements(
+            player_only=True,
+            private_only=True,
+            valid_game_states=(GameState.RUNNING,))
+        args = (ArgType(Player, optional=True),)
+        super().__init__('cancel', 'cancelproposal',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        assert command.player
+
+        target: Optional[Player] = command.args[0]
+
+        proposals = command.player.proposals
+
+        if not proposals:
+            raise CommandException(self, 'You have no outgoing proposals.')
+
+        if target is not None:
+            try:
+                proposal = next(x for x in proposals if x.target == target)
+            except StopIteration:
+                raise CommandException(
+                    self, 'You have no proposals to {}.'.format(target))
+
+        elif len(proposals) == 1:
+            proposal = proposals[0]
+
+        else:
+            raise CommandException(
+                self, 'You have multiple proposals, '
+                'please specify to which player.')
+
+        command.game.game.cancel_proposal(proposal)
+        await command.player.send(
+            'Canceled proposal to {}.'.format(proposal.target))
+        await proposal.target.send(
+            '{} canceled their proposal to you.'.format(command.player))
+
+
+class Proposals(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = 'List all your incoming and outgoing proposals.'
+        requirements = Requirements(
+            player_only=True,
+            private_only=True,
+            valid_game_states=(GameState.RUNNING, GameState.PAUSED))
+        super().__init__('proposals',
+                         games=games,
+                         requirements=requirements,
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        assert command.player
+
+        if not command.player.proposals:
+            await command.player.send(
+                'You have no incoming or outgoing proposals.')
+            return
+
+        await command.player.send(
+            *(str(x) for x in command.player.proposals),
+            start='```',
+            end='```',
+            sep='\n')
 
 
 class Leave(CommandType):
@@ -283,11 +433,11 @@ class Leave(CommandType):
                          requirements=requirements,
                          help_text=help_text)
 
-    async def _do_game_player_execute(self,
-                                      command: CommandMessage,
-                                      game: DiscordGame,
-                                      player: DiscordPlayer) -> None:
-        await game.remove_player(player)
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.player
+        assert command.game
+
+        await command.game.remove_player(command.player)
 
 
 # Join commands
@@ -328,11 +478,11 @@ class RecreateJoin(CommandType):
                          requirements=requirements,
                          help_text=help_text)
 
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
+    async def _do_execute(self, command: CommandMessage) -> None:
         assert self.games is not None
+        assert command.game
 
-        game = DiscordGame(command.channel, game.game.options)
+        game = DiscordGame(command.channel, command.game.game.options)
         self.games[command.channel] = game
         await game.add_player(command.author)
 
@@ -352,16 +502,17 @@ class Join(CommandType):
                          requirements=requirements,
                          help_text=help_text)
 
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
-        await game.add_player(command.author)
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        await command.game.add_player(command.author)
 
 
 # General commands
 class Shutdown(CommandType):
     def __init__(self, client: discord.Client):
         help_text = ('Turns off the bot.')
-        requirements = Requirements(admin_only=True)
+        requirements = Requirements(public_only=True,  # User has no roles
+                                    admin_only=True)
         super().__init__('shutdown', 'forcequit',
                          requirements=requirements,
                          help_text=help_text)
@@ -370,6 +521,79 @@ class Shutdown(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         await command.channel.send('Shutting down.')
         await self.client.close()
+
+
+class Help(CommandType):
+    def __init__(self) -> None:
+        help_text = ('DM a help text, optionally for a specified command.')
+        # TODO: args = (ArgType(CommandType),)
+        super().__init__('help', 'info',
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        await command.author.send(
+            'Type `!help` to see this help text.\n'
+            'Type `!rules` for an overview and explanation on how the game '
+            'works.\n'
+            'Type `!commands` for a list of the commands available through '
+            'direct messages.\n'
+            'Most of the commands are only available to players that have '
+            'joined the game.\n'
+            'Knowing the rules, most of the commands should be '
+            'self-explanatory, and they will '
+            "give helpful error messages if you're invoking them "
+            "incorrectly.\n"
+            'Help for individual commands is not yet implemented, so you '
+            'will have to experiment or ask :).'
+        )
+        if not isinstance(command.channel, discord.DMChannel):
+            await command.channel.send('Help text sent via DM.')
+
+
+class Rules(CommandType):
+    def __init__(self) -> None:
+        help_text = 'DM an overview of the rules for the Seat Exchange Game'
+        # TODO: args = (ArgType(str),) ? for different subsections of rules
+        super().__init__('rules', 'rule',
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        await command.author.send(
+            RULES_STR.format(
+                url=WIKIPEDIA_URL,
+                start_garnets=20,  # self._game.options['start_garnets'],
+                win_garnets=10,  # self._game.options['win_garnets'],
+                lose_garnets=10,  # self._game.options['x_garnets']*-1
+            ))
+        if not isinstance(command.channel, discord.DMChannel):
+            await command.channel.send('Rules sent via DM.')
+
+
+class Commands(CommandType):
+    def __init__(self, commands: Sequence[CommandType]) -> None:
+        self.commands = commands
+        help_text = 'DM full list of all available commands'
+        # TODO: Split into Commands, GameCommands,
+        # AdminCommands (PlayerCommands?)
+        super().__init__('commands', 'command',
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        await command.author.send(
+            ' '.join('`!' + str(x) + '`' for x in self.commands))
+        if not isinstance(command.channel, discord.DMChannel):
+            await command.channel.send('Command list sent via DM.')
+
+
+class Source(CommandType):
+    def __init__(self) -> None:
+        help_text = 'Prints the URL to the source code.'
+        super().__init__('source', 'sourcecode', 'code',
+                         help_text=help_text)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        await command.channel.send(
+            'https://github.com/h00701350103/seat_exchange')
 
 
 # Game commands
@@ -385,9 +609,9 @@ class ForceStart(CommandType):
                          requirements=requirements,
                          help_text=help_text)
 
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
-        await game.start()
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        await command.game.start()
 
 
 class ListPlayers(CommandType):
@@ -400,14 +624,14 @@ class ListPlayers(CommandType):
                          requirements=requirements,
                          help_text=help_text)
 
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
-        if not list(game.players):
-            game.send('No players joined.')
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        if not list(command.game.players):
+            command.game.send('No players joined.')
             return
 
-        await game.send('```', *game.players,
-                        sep='\n', end='```')
+        await command.channel.send('```', *command.game.players,
+                                   sep='\n', end='```')
 
 
 class AddBot(CommandType):
@@ -416,7 +640,7 @@ class AddBot(CommandType):
             game_only=True,
             public_only=True,
             valid_game_states=[GameState.CREATED])
-        args = (str,)
+        args = (ArgType(str),)
         help_text = ('Add a bot with the specified name to the game.')
         super().__init__('addbot',
                          games=games,
@@ -424,14 +648,15 @@ class AddBot(CommandType):
                          args=args,
                          help_text=help_text)
 
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+
         name = cast(str, command.args[0])
         if not name.isalnum() or not name[0].isalpha():
             raise CommandException(
                 self, 'Give the bot a proper name!')
 
-        await game.add_bot(name.lower())
+        await command.game.add_bot(name.lower())
 
 
 class RemoveBot(CommandType):
@@ -440,7 +665,7 @@ class RemoveBot(CommandType):
             game_only=True,
             public_only=True,
             valid_game_states=[GameState.CREATED])
-        args = (BotPlayer,)
+        args = (ArgType(BotPlayer),)
         help_text = ('Remove the specified bot from the game.')
         super().__init__('removebot',
                          games=games,
@@ -448,6 +673,6 @@ class RemoveBot(CommandType):
                          args=args,
                          help_text=help_text)
 
-    async def _do_game_execute(self, command: CommandMessage,
-                               game: DiscordGame) -> None:
-        await game.remove_bot(command.args[0])
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+        await command.game.remove_bot(command.args[0])

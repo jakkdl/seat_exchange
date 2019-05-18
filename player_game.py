@@ -23,9 +23,9 @@ class Proposal:
         self.target: Player = target
         self.garnets: int = garnets
 
-        self.__lock_up_garnets()
+        self._lock_up_garnets()
 
-    def __lock_up_garnets(self) -> None:
+    def _lock_up_garnets(self) -> None:
         # lock up garnets until canceled
         if self.garnets < 0:
             raise PlayerGameException(
@@ -35,8 +35,14 @@ class Proposal:
                 "Can't create proposal, insufficient garnets")
         self.source.garnets -= self.garnets
 
+    def _release_garnets(self) -> None:
+        self.source.garnets += self.garnets
+
+    def _award_garnets(self) -> None:
+        self.target.garnets += self.garnets
+
     def __str__(self) -> str:
-        return 'Proposal from {} to {} offering {} garnets'.format(
+        return 'Proposal from {} to {} offering {} garnets.'.format(
             self.source,
             self.target,
             self.garnets)
@@ -52,10 +58,10 @@ class Proposal:
 
         self.target.swap(self.source)
 
-        self.target.garnets += self.garnets
+        self._award_garnets()
 
     def cancel(self) -> None:
-        self.source.garnets += self.garnets
+        self._release_garnets()
 
 
 class Findable:  # pylint: disable=too-few-public-methods
@@ -125,7 +131,11 @@ class Player(Findable):
                 raise PlayerGameException(
                     'You already have a proposal to {}'.format(target))
 
-        return Proposal(self, target, garnets)
+        proposal = Proposal(self, target, garnets)
+
+        self.game.proposals.add(proposal)
+
+        return proposal
 
     def swap(self, target: Player, force: bool = False) -> None:
         self.game.swap_seats(self, target, force)
@@ -156,9 +166,9 @@ class Player(Findable):
     # and they make no sense in the context of this class, but when
     # discord_game handles BotPlayers and DiscordPlayers we would need to do
     # constant casting to not get mypy to scream at us.
-    async def send(self, *args: str, sep: str = ' ', end: str = '',
-                   **kwargs: Tuple[str, str]) -> None:
-        raise PlayerGameException('Pure virtual method')
+    async def send(self, *args: str, sep: str = ' ', start: str = '',
+                   end: str = '', **kwargs: Tuple[str, str]) -> None:
+        raise NotImplementedError('Pure virtual method')
 
     # Subclasses uses self so can't make it a function
     def matches(self, search_key: str) -> bool:

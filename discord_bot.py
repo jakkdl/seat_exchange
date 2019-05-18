@@ -22,26 +22,41 @@ class DiscordBot(discord.Client):  # type: ignore
         self.games: Dict[discord.TextChannel, DiscordGame] = {}
         self.players: Dict[discord.user, DiscordGame] = {}
 
-        command_list = (
-            commands.Ready(self.games),
-            commands.Unready(self.games),
+        # So we can pass command list into Commands.
+        self.command_list: List[commands.CommandType] = []
 
+        self.command_list += [
+            # help
+            commands.Help(),
+            commands.Rules(),
+            commands.Source(),
+            commands.Commands(self.command_list),
+
+            # pre-game
             commands.Join(self.games),
             commands.CreateJoin(self.games),
             commands.RecreateJoin(self.games),
-
             commands.Leave(self.games),
-
             commands.AddBot(self.games),
             commands.RemoveBot(self.games),
 
+            commands.Ready(self.games),
+            commands.Unready(self.games),
+
+            commands.ListPlayers(self.games),
+
+            # game
+            commands.Proposals(self.games),
+            commands.Propose(self.games),
+            commands.CancelProposal(self.games),
+
+            # admin
             commands.Shutdown(self),
             commands.ForceStart(self.games),
-            commands.ListPlayers(self.games)
-        )
+        ]
 
         self.command_dict: Dict[str, List[commands.CommandType]] = {}
-        for command in command_list:
+        for command in self.command_list:
             for command_name in command.command_name_list:
                 if command_name not in self.command_dict:
                     self.command_dict[command_name] = [command]
@@ -101,21 +116,6 @@ class DiscordBot(discord.Client):  # type: ignore
     # '!leave':        self._command_leave,
     # '!setoption':    self._command_setoption,
     # '!getoptions':   self._command_getoptions,
-    # }
-
-    # self._public_commands = {
-    # '!help':         self._public_command_help,
-    # '!command':      self._public_command_commands,
-    # '!commands':     self._public_command_commands,
-    # '!source':       self._public_command_source,
-    # }
-
-    # self._dm_commands = {
-    # '!help':         self._dm_command_help,
-    # '!command':      self._dm_command_commands,
-    # '!commands':     self._dm_command_commands,
-    # '!rules':        self._dm_command_rules,
-    # '!source':       self._dm_command_source,
     # }
 
     # async def on_reaction_add(self, reaction, _user):  # TODO
@@ -393,92 +393,6 @@ class DiscordBot(discord.Client):  # type: ignore
     #         channel):  # pylint: disable=unused-argument
     #     await channel.send('`' + '` `'.join(self._admin_commands.keys())
     # + '`' )
-
-    # async def _dm_command_help(
-    #         self, _parameters: List[str],
-    #         player: Player):  # pylint: disable=unused-argument
-    #     await player.send(
-    #         'Type `!help` to see this help text.\n'
-    #         'Type `!rules` for an overview and explanation on how the game '
-    #         'works.\n'
-    #         'Type `!commands` for a list of the commands available through '
-    #         'direct messages.\n'
-    #         'Most of the commands are only available to players that have '
-    #         'joined the game.\n'
-    #         'Knowing the rules, most of the commands should be '
-    #         'self-explanatory, and they will '
-    #         "give helpful error messages if you're invoking them "
-    #         "incorrectly.\n"
-    #         'Help for individual commands is not yet implemented, so you '
-    #         'will have to experiment '
-    #         'or ask :).'
-    #     )
-
-    # async def _dm_command_source(
-    #         self, _parameters: List[str],
-    #         player: Player):  # pylint: disable=unused-argument
-    #     await player.send('https://github.com/h00701350103/seat_exchange')
-
-    # async def _dm_command_commands(
-    #         self, _parameters: List[str],
-    #         player: Player):  # pylint: disable=unused-argument
-    #     await player.send(
-    #         'Command list for private messages:\n'
-    #         'General commands: `{general}`\n'
-    #         'Player-only commands: `{player}`'.format(
-    #             general='` `'.join(self._dm_commands.keys()),
-    #             player='` `'.join(self._dm_player_commands)  # TODO
-    #         )
-    #     )
-
-    # async def _dm_command_rules(self, _parameters: List[str],
-    # player: Player):
-    #     await player.send(RULES_STR.format(
-    #         url=WIKIPEDIA_URL,
-    #         start_garnets=20,  # self._game.options['start_garnets'],
-    #         win_garnets=10,  # self._game.options['win_garnets'],
-    #         lose_garnets=10,  # self._game.options['x_garnets']*-1
-    #     ))
-
-    # async def _public_command_help(self, parameters: List[str],
-    #                                author: discord.User,
-    #                                channel):
-    #     await channel.send('Information sent in a private message.\n'
-    #                        'Type `!commands` for list of public commands.')
-    #     await self._dm_command_help(parameters, author)
-
-    # async def _public_command_commands(self, _parameters: List[str],
-    #                                    _author: discord.User,
-    #                                    channel):
-    #     await channel.send(
-    #         'Command list for public channels:\n'
-    #         'General commands: `{general}`\n'
-    #         'Player-only commands: `{player}`'.format(
-    #             general='` `'.join(self._public_commands.keys()),
-    #             player='` `'.join(self._public_player_commands)
-    #         )
-    #     )
-
-    # async def _public_command_players(self, _parameters: List[str],
-    #                                   _author: discord.User,
-    #                                   channel):
-    #     if channel not in self.games:
-    #         await channel.send('No game exists in this channel.')
-    #         return
-    #     game = self.games[channel]
-    #     if not game.players:
-    #         await channel.send('No players in the game')
-    #         return
-    #     await channel.send('```Players joined:\n'
-    #                        '{}```'.format('\n'.join([
-    #                            str(p) for p in game.players])))
-
-    # async def _public_command_source(
-    #         self,
-    #         _parameters: List[str],
-    #         _author: discord.User,
-    #         channel):  # pylint: disable=unused-argument
-    #     await channel.send('https://github.com/h00701350103/seat_exchange')
 
     # async def _command_forcestop(self, _parameters: List[str],
     #                              _player: Player, channel):

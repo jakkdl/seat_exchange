@@ -61,6 +61,7 @@ class DiscordPlayer(Player):
     async def send(self,
                    *args: str,
                    sep: str = ' ',
+                   start: str = '',
                    end: str = '',
                    **kwargs: Tuple[str, str]) -> None:
         # don't send to ourselves
@@ -68,7 +69,7 @@ class DiscordPlayer(Player):
             return
 
         try:
-            await self.user.send(sep.join(args)+end, **kwargs)
+            await self.user.send(start+sep.join(args)+end, **kwargs)
         except discord.errors.Forbidden:
             print('blocked by {}'.format(self))
 
@@ -93,7 +94,10 @@ class BotPlayer(Player):
     def matches(self, search_key: str) -> bool:
         return search_key.lower() == self.name.lower()
 
-    async def send(self, *args: str, sep: str = ' ', end: str = '',
+    async def send(self, *args: str,
+                   sep: str = ' ',
+                   start: str = '',
+                   end: str = '',
                    **kwargs: Tuple[str, str]) -> None:
         pass
 
@@ -109,13 +113,16 @@ class BotSwap(Proposal):
                  target: BotPlayer,
                  guarantor: DiscordPlayer,
                  garnets: int = 0):
-        super().__init__(source, target, 0)
+        super().__init__(source, target, garnets)
         self.guarantor = guarantor
-        self.garnets = garnets
 
-        self.__lock_up_garnets()
+    def __str__(self) -> str:
+        return ('Botswap between {} and {} '
+                'guaranteed by {} with {} garnets.'.format(
+                    self.source, self.target,
+                    self.guarantor, self.garnets))
 
-    def __lock_up_garnets(self) -> None:
+    def _lock_up_garnets(self) -> None:
         if self.garnets < 0:
             raise DiscordGameException(
                 'Garnet amount must be non-negative.')
@@ -126,21 +133,13 @@ class BotSwap(Proposal):
 
         self.guarantor.garnets -= self.garnets
 
-    def __str__(self) -> str:
-        return ('Botswap between {} and {} '
-                'guaranteed by {} with {} garnets'.format(
-                    self.source, self.target,
-                    self.guarantor, self.garnets))
-
-    def accept(self) -> None:
-        super().accept()
-
+    def _award_garnets(self) -> None:
         rewards = [math.ceil(self.garnets/2), math.floor(self.garnets/2)]
         random.shuffle(rewards)
         self.source.garnets += rewards[0]
         self.target.garnets += rewards[1]
 
-    def cancel(self) -> None:
+    def _release_garnets(self) -> None:
         self.guarantor.garnets += self.garnets
 
 
@@ -168,7 +167,6 @@ class DiscordGame:
             # '!botswap'  : self._command_botswap,
             # '!cancelbotswaps' : self._command_cancelall_botswaps,
 
-            '!propose':      self._command_propose,
             '!cancel':       self._command_cancel,
             '!cancelall':    self._command_cancelall,
             '!accept':       self._command_accept,
@@ -206,17 +204,13 @@ class DiscordGame:
 
         self.state = GameState.STARTING
 
-        await self.send('Starting game in {} seconds.'.format(timer))
-
-        for time in timer-5, 5:
+        for time in range(timer, 0, -5):
+            await self.send('Starting game in {} seconds.'.format(time))
             await asyncio.sleep(time)
 
             if self.state != GameState.STARTING:
                 await self.send('Countdown canceled.')
                 return
-
-            await self.send('Starting game{}.'.format(
-                'in 5 seconds' if time != 5 else ''))
 
         await self.start()
 
@@ -286,7 +280,7 @@ class DiscordGame:
             if current_round != self.game.current_round:
                 print('Next round prematurely started.')
                 return
-            self._start_new_round()
+            await self._start_new_round()
 
     async def _message_start_game(self) -> None:  # TODO
         await self.channel.send(self._current_options_string())
@@ -331,6 +325,9 @@ class DiscordGame:
         self.bots[name] = bot
         self.game.add_player(bot)
         await self.send('Bot player {} added to the game'.format(bot))
+
+        if self._all_players_ready():
+            await self.start_game_countdown()
 
     async def remove_bot(self, bot: BotPlayer) -> None:
         self.bots.pop(bot.name)
@@ -600,77 +597,6 @@ class DiscordGame:
 #                'Error: you have no active botswaps proposed.')
 #
 #        player.botswaps = []
-
-    async def _command_propose(self, parameters: List[str],
-                               player: DiscordPlayer) -> None:
-        if not self.running:
-            raise DiscordGameException(
-                'Error: game is not running')
-
-        if not parameters:
-            raise DiscordGameException(
-                'Error: please provide the id, seat, name or '
-                'display name of a player '
-                'and optionally an amount of garnets to bribe with.')
-
-        try:
-            target = self.find_player(' '.join(parameters[:-1]))
-            garnet_bribe = True
-        except DiscordGameException:
-            target = self.find_player(' '.join(parameters))
-            garnet_bribe = False
-
-        if player == target:
-            raise DiscordGameException(
-                "Error: can't propose to yourself.")
-
-        if player.swapped and self.game.options['public_swaps']:
-            raise DiscordGameException(
-                'Error: you have already swapped seats this round')
-
-        if target.swapped and self.game.options['public_swaps']:
-            raise DiscordGameException(
-                'Error: {} have already swapped seats this round.'.format(
-                    target))
-
-        if len(parameters) > 1 and garnet_bribe:
-            if parameters[-1].isdigit() and int(parameters[-1]) >= 0:
-                garnets = int(parameters[-1])
-            else:
-                raise DiscordGameException('invalid amount of garnets {}'
-                                           ''.format(parameters[1]))
-        else:
-            garnets = 0
-
-        player.add_proposal_to(target, garnets)
-
-        await player.send(
-            'Proposal sent to {target} offering {garnets} garnets.\n'
-            'Those garnets are locked up until either player cancels the '
-            'proposal.\n'
-            'You now have {player.garnets} garnets.\n'
-            'You can cancel the proposal with `!cancel.`'.format(
-                player=player,
-                target=target,
-                garnets=garnets
-            ))
-
-        if target.swapped:
-            message = (
-                'You have already swapped seats this round, and '
-                'cannot accept this proposal.\n'
-                'You can reject the proposal with `!reject`.')
-        else:
-            message = (
-                'You can accept the proposal with `!accept` '
-                'or reject it with `!reject`.')
-
-        await target.send(
-            'Proposal received from {player} offering {garnets}.\n'
-            '{message}'.format(
-                player=player,
-                garnets=garnets,
-                message=message))
 
     async def _command_cancel(self, parameters: List[str],
                               player: DiscordPlayer) -> None:
