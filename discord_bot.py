@@ -7,7 +7,7 @@ from discord_game import DiscordGame
 
 import seat_commands as commands
 
-from seat_typing import SeatException
+from seat_typing import SeatException, SeatChannel
 
 # TODO: police nickname changes
 
@@ -19,23 +19,30 @@ class DiscordBotException(SeatException):
 class DiscordBot(discord.Client):  # type: ignore
     def __init__(self) -> None:
         super().__init__()
-        self.games: Dict[discord.TextChannel, DiscordGame] = {}
-        self.players: Dict[discord.user, DiscordGame] = {}
+        self.games: Dict[SeatChannel, DiscordGame] = {}
+        # self.players: Dict[discord.user, DiscordGame] = {}
 
         # So we can pass command list into Commands.
         self.command_list: List[commands.CommandType] = []
+        self.command_dict: Dict[str, List[commands.CommandType]] = {}
 
+        self._initialize_commands()
+
+    def _initialize_commands(self) -> None:
         self.command_list += [
-            # help
+            # General info
             commands.Help(),
             commands.Rules(),
-            commands.Source(),
             commands.Commands(self.command_list),
+            commands.Source(),
 
-            # pre-game
+            # Game management
+            commands.Create(self.games),
+            commands.Recreate(self.games),
             commands.Join(self.games),
             commands.CreateJoin(self.games),
             commands.RecreateJoin(self.games),
+
             commands.Leave(self.games),
             commands.AddBot(self.games),
             commands.RemoveBot(self.games),
@@ -43,19 +50,35 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.Ready(self.games),
             commands.Unready(self.games),
 
-            commands.ListPlayers(self.games),
+            commands.RoundLength(self.games),
 
-            # game
-            commands.Proposals(self.games),
-            commands.Propose(self.games),
-            commands.CancelProposal(self.games),
+            # game info
+            commands.PrintProposals(self.games),
+            commands.PrintBotSwaps(self.games),
+            commands.PrintPlayers(self.games),
+            commands.PrintGarnets(self.games),
+
+            commands.PrintSeating(self.games),
+            commands.AssignNumber(self.games),
+            commands.UnassignNumber(self.games),
+
+            # gameplay
+            commands.ProposeSeatSwap(self.games),
+            commands.AcceptSeatSwap(self.games),
+            commands.CancelSeatSwap(self.games),
+
+            commands.CreateBotSwap(self.games),
+            commands.CancelBotSwap(self.games),
+            commands.DonateGarnets(self.games),
 
             # admin
             commands.Shutdown(self),
             commands.ForceStart(self.games),
+            commands.ForceStop(self.games),
+            commands.ForceNewRound(self.games),
+            # commands.ForceSeatNumbers(self.games),
         ]
 
-        self.command_dict: Dict[str, List[commands.CommandType]] = {}
         for command in self.command_list:
             for command_name in command.command_name_list:
                 if command_name not in self.command_dict:
@@ -78,10 +101,11 @@ class DiscordBot(discord.Client):  # type: ignore
             return
 
         command = message.content.split(' ')[0][1:]
+        channel = SeatChannel(message.channel)
         # parameters = message.content.split(' ')[1:]
 
         if command in self.command_dict:
-            command_message = commands.CommandMessage(message)
+            command_message = commands.CommandMessage(message, channel)
             errors = []
             for matching_command in self.command_dict[command]:
                 try:
@@ -92,180 +116,25 @@ class DiscordBot(discord.Client):  # type: ignore
             print(errors)
             await message.channel.send('\n'.join(str(x) for x in errors))
 
-    #
-    # Old code that will be reimplemented in other places slightly different
-    #
+    async def on_reaction_add(self,
+                              reaction: discord.Reaction,
+                              user: discord.User) -> None:  # TODO
+        print('reaction added')
+        message = reaction.message
+        channel = SeatChannel(message.channel)
 
-    #    self._dm_player_commands = (
-    #        DiscordGame(None).dm_player_commands.keys())
-    # !kick
-    # self._admin_commands = {
-    # !kick
-    # !forcenextround - impossible?
-    # '!forcequit':        self._command_forcequit,
-    # '!forcejoin':        self._command_forcejoin,
-    # '!forcejoinall':     self._command_forcejoinall,
-    # '!forceleave':       self._command_forceleave,
-    # '!forcestop':        self._command_forcestop,
-    # '!forceseatnumbers': self._command_forceseatnumbers,
-    # '!admincommands':    self._command_admincommands
-    # }
+        if channel not in self.games:
+            print('no channel')
+            return
 
-    # self._public_player_commands = {
-    # '!stop':         self._command_stop,
-    # '!leave':        self._command_leave,
-    # '!setoption':    self._command_setoption,
-    # '!getoptions':   self._command_getoptions,
-    # }
+        game = self.games[channel]
 
-    # async def on_reaction_add(self, reaction, _user):  # TODO
-    #     print('reaction added')
-    #     message = reaction.message
-    #     channel = message.channel
-    #     if message.content != '!stop':
-    #         return
+        if message.id not in game.reactable_messages:
+            print(message, '\n', game.reactable_messages)
+            return
 
-    #     if not self._game_started:
-    #         print('game not started')
-    #         return
-
-    #     if message.created_at.timestamp() < self._game_started:
-    #         print('old message, {} < {}'.format(
-    #             message.created_at.timestamp(), self._game_started))
-    #         return
-
-    #     if reaction.count >= len(self.players)//2:
-    #         await channel.send('Game stopped.')
-    #         self.games[channel].stop()
-
-    # async def _parse_command(self, command, parameters: List[str], author,
-    #                          channel) -> None:
-    #     if command in self._admin_commands:
-    #         # TODO: if admin
-    #         for role in author.roles:
-    #             if role.name.lower() == 'game admin':
-    #                 await self._admin_commands[command](parameters,
-    #                                                     author,
-    #                                                     channel)
-    #                 break
-    #         else:
-    #             raise DiscordBotException('Unauthorized.')
-
-    #     elif isinstance(channel, discord.TextChannel):
-    #         await self._parse_public_command(command, parameters, author,
-    #                                          channel)
-
-    #     elif isinstance(channel, discord.DMChannel):
-    #         await self._parse_dm_command(command, parameters, author)
-
-    #     else:
-    #         raise DiscordBotException(
-    #             'Channel not supported.')
-
-    # async def _parse_public_command(self, command: str,
-    # parameters: List[str],
-    #                                 author, channel):
-    #     if command in self._public_commands:
-    #         await self._public_commands[command](parameters,
-    #                                              author,
-    #                                              channel)
-    #     elif command in self._public_player_commands:
-    #         if channel not in self.games:
-    #             raise DiscordBotException(
-    #                 'Error: No game running in this channel.')
-    #         game = self.games[channel]
-    #         if author not in game.players:
-    #             raise DiscordBotException(
-    #                 'Error: {} not a player in the game in '
-    #                 'this channel.'.format(author))
-    #         await self._public_player_commands[command](
-    #             parameters,
-    #             game.discord_players[author],
-    #             channel)
-    #     elif (command in self._dm_player_commands
-    #           or command in self._dm_commands):
-    #         raise DiscordBotException(
-    #             'Command `{}` only allowed in direct messages.'
-    #             ''.format(command))
-
-    #     else:
-    #         raise DiscordBotException(
-    #             'Unknown command `{}`.'.format(command))
-
-    # async def _parse_dm_command(self, command: str, parameters: List[str],
-    #                             author):
-
-    #     if command in self._dm_commands:
-    #         await self._dm_commands[command](parameters, author)
-    #         return
-
-    #     if command in self._public_commands:
-    #         raise DiscordBotException(
-    #             'Command `{}` only allowed in public channels.'.format(
-    # command)
-    #         )
-
-    #     if command in self._public_player_commands:
-    #         raise DiscordBotException(
-    #             'Command `{}` only allowed in a public game channel.'
-    #             ''.format(command))
-
-    #     for i in self.games.values():
-    #         if author in i.players:
-    #             player = i.discord_players[author]
-    #             game = i
-    #             break
-    #     else:
-    #         raise DiscordBotException(
-    #             'Command `{}` is only for players that have joined a game.'
-    #             'Please `!join` a game in a public game channel first.'
-    #             ''.format(command))
-
-    #     if command in self._dm_player_commands:
-    #         await game.dm_player_commands[command](
-    #             parameters, player)
-
-    #     else:
-    #         raise DiscordBotException('Unknown command `{}`'.format(
-    #             command))
-
-    # async def _command_forcequit(self, _parameters: List[str], _author,
-    #                              channel):
-    #     await channel.send('closing...')
-    #     print('closing...\n\n')
-    #     await self.close()
-
-    # async def _command_forcejoin(self, parameters: List[str],
-    #                             _author, channel):
-    #    for member in channel.guild.members:
-    #        if ' '.join(parameters).lower() in (str(member.id),
-    #                                            member.name.lower(),
-    #                                            member.display_name.lower()):
-    #            await self._command_join(parameters, member, channel)
-    #            break
-    #    else:
-    #        raise DiscordBotException('Invalid member {}'.format(
-    #            ' '.join(parameters)))
-
-    # async def _command_forceleave(self, parameters, _author, channel):
-    #    if channel not in self.games:
-    #        raise DiscordBotException('No game in this channel.')
-
-    #    for player in self.games[channel].players.values():
-    #        if player.matches(' '.join(parameters)):
-    #            await self._command_leave(parameters, player, channel)
-    #            break
-    #    else:
-    #        raise DiscordBotException('Invalid player {}'.format(
-    #            ' '.join(parameters)))
-
-    # async def _command_forcejoinall(self, parameters: List[str], _author,
-    #                                channel):
-    #    for member in channel.members:
-    #        try:
-    #            await self._command_join(parameters, member, channel)
-    #        except DiscordBotException:
-    #            pass
+        await game.reactable_messages[message.id].on_react(
+            reaction, user)
 
     # def _resolve_botswaps(self):
     #     def highest_proposal_bribe(player: Player, botswap) -> int:
@@ -344,11 +213,6 @@ class DiscordBot(discord.Client):  # type: ignore
     #                        'the `!stop` message '
     #                        'the game will be stopped'.format(
     #                            len(self.players)//2))
-
-    # def _stop_game(self):
-    #     self._game_started = 0.0
-    #     self._game = DiscordGame(self._game.options)
-    #     self.players = {}
 
     # async def _command_getoptions(self, _parameters: List[str],
     #                               _player: Player, channel):
@@ -432,36 +296,6 @@ class DiscordBot(discord.Client):  # type: ignore
     #     self.players.pop(player.user)
     #     await channel.send(
     #         '{} has been kicked from the game.'.format(player))
-
-    # async def _command_leave(self, _parameters: List[str],
-    #                          player: Player, channel):
-    #     if channel not in self.games:
-    #         raise DiscordBotException(
-    #             'No game in this channel.')
-
-    #     game = self.games[channel]
-    #     if player not in game.players:
-    #         raise DiscordBotException(
-    #             'Error: {} has not joined.'.format(player))
-
-    #     # send message asking for confirmation in the form
-    #     # of emoji reaction to message.
-    #     # if self._game_started:
-    #     #     raise DiscordBotException(
-    #     #         'Error: cannot leave game in progress (WIP)'
-    #     #     )
-
-    #     game.remove_player(player)
-
-    #     await channel.send('{} has left the game'.format(player))
-
-    # def _find_member(self, channel, search_key: str) -> Player:
-    #     for player in self.games[channel].players.values():
-    #         if player.matches(search_key):
-    #             return player
-
-    #     raise DiscordBotException(
-    #         'Error: cannot find any matches for {}'.format(search_key))
 
 
 def main() -> None:

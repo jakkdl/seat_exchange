@@ -1,7 +1,7 @@
 # pragma pylint: disable=missing-docstring
 from __future__ import annotations
 import typing
-from typing import List, Set, Dict, Optional, Tuple, Any, cast
+from typing import List, Any, cast
 
 import random
 
@@ -24,6 +24,9 @@ class Proposal:
         self.garnets: int = garnets
 
         self._lock_up_garnets()
+
+    def __contains__(self, player: Player) -> bool:
+        return player in (self.source, self.target)
 
     def _lock_up_garnets(self) -> None:
         # lock up garnets until canceled
@@ -96,7 +99,8 @@ class Player(Findable):
                     'Error: Found {} which is a {} and not a {}.'.format(
                         player, type(player).__name__, cls.__name__))
         raise PlayerGameException(
-            'Error: Found no player matching `{}`.'.format(search_key))
+            'Error: Found no {} matching `{}`.'.format(
+                cls.__name__, search_key))
 
     @property
     def seat(self) -> Seat:
@@ -154,6 +158,12 @@ class Player(Findable):
         self._swapped = False
 
     async def donate_garnets(self, target: 'Player', amount: int) -> None:
+        if amount > self.garnets:
+            raise PlayerGameException(
+                'Error: cannot donate more garnets than you have.')
+        if amount <= 0:
+            raise PlayerGameException(
+                'Error: invalid garnet amount')
         self.garnets -= amount
         target.garnets += amount
 
@@ -166,8 +176,7 @@ class Player(Findable):
     # and they make no sense in the context of this class, but when
     # discord_game handles BotPlayers and DiscordPlayers we would need to do
     # constant casting to not get mypy to scream at us.
-    async def send(self, *args: str, sep: str = ' ', start: str = '',
-                   end: str = '', **kwargs: Tuple[str, str]) -> None:
+    async def send(self, *args: Any, **kwargs: str) -> None:
         raise NotImplementedError('Pure virtual method')
 
     # Subclasses uses self so can't make it a function
@@ -177,25 +186,24 @@ class Player(Findable):
 
 class PlayerGame:
     def __init__(self,
-                 options: Optional[Dict[str, Any]] = None):
-        super().__init__()
-        self._seating_to_player: List[Player] = []
-        self.proposals: Set[Proposal] = set()
-        self._game: seat_game.SeatGame = seat_game.SeatGame(
-            options=options)
-
-        self.options: Dict[str, Any] = {
-            'public_swaps': False,  # TODO: Move up
+                 options: typing.Optional[typing.Dict[str, Any]] = None):
+        self.options = options if options is not None else {}
+        default_options: typing.Dict[str, Any] = {
             'win_garnets': 10,
             'x_garnets': -10,
             'start_garnets': 20,
             # 'x_count': len(self._game.current_x), # TODO: Move down
-            'round_length': 600  # TODO: Move up
         }
-        if options:
-            for option in options:
-                if option in self.options:
-                    self.options[option] = options[option]
+        for key in default_options:
+            if key not in self.options:
+                self.options[key] = default_options[key]
+
+        # TODO super()
+        self._game: seat_game.SeatGame = seat_game.SeatGame(
+            options=self.options)
+
+        self._seating_to_player: List[Player] = []
+        self.proposals: typing.Set[Proposal] = set()
 
     # Translations of SeatGame in new context
     @property
@@ -302,12 +310,10 @@ class PlayerGame:
                 typing.cast(Seat, self._seating_to_player.index(player)))
 
     def new_round(self) -> bool:
-
         for player in self._seating_to_player:
             player.new_round()
         for player in self._seating_to_player:
             player.reset_swapped()
-            # player.botswaps = []
 
         old_proposals = self.proposals.copy()
         for proposal in old_proposals:

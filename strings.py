@@ -50,7 +50,7 @@ RULES_STR = (
     'During each round players can propose to swap seats with another '
     'player, optionally '
     'bribing them with a few garnets as well.\n'
-    'You can also donate garnets to other players, this is inteded to be '
+    'You can also donate garnets to other players, this is intended to be '
     'used for non-'
     'binding proposals.\n'
     'You can only swap seats once per round.\n'
