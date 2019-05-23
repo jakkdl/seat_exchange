@@ -22,7 +22,6 @@ class DiscordBot(discord.Client):  # type: ignore
         self.games: Dict[SeatChannel, DiscordGame] = {}
         # self.players: Dict[discord.user, DiscordGame] = {}
 
-        # So we can pass command list into Commands.
         self.command_list: List[commands.CommandType] = []
         self.command_dict: Dict[str, List[commands.CommandType]] = {}
 
@@ -31,7 +30,7 @@ class DiscordBot(discord.Client):  # type: ignore
     def _initialize_commands(self) -> None:
         self.command_list += [
             # General info
-            commands.Help(),
+            commands.Help(self.command_dict),
             commands.Rules(),
             commands.Commands(self.command_list),
             commands.Source(),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 import typing
-from typing import Container, Optional, List, Any, Sequence, cast
+from typing import Optional, List, Any, Sequence, cast
 from dataclasses import dataclass
 
 import discord  # type: ignore
@@ -12,9 +12,12 @@ import discord  # type: ignore
 import seat_typing
 import discord_game
 from discord_game import DiscordPlayer, DiscordGame, GameState, BotPlayer
-from player_game import Findable, PlayerGame, Player
+from player_game import Findable, Player, Proposal
 
-from strings import RULES_STR, WIKIPEDIA_URL
+import strings
+
+OPTIONAL_STR = "Brackets around an argument means that it's optional."
+OWNER_ID = 84627464709472256
 
 GameDict = typing.Dict[discord.TextChannel, DiscordGame]
 
@@ -29,23 +32,29 @@ class CommandException(seat_typing.SeatException):
 class ArgType:
     def __init__(self, arg_type: type,
                  optional: bool = False,
-                 defaultvalue: Any = None) -> None:
+                 defaultvalue: Any = None,
+                 name: Optional[str] = None) -> None:
         self.arg_type: type = arg_type
         self.optional: bool = optional
         self.defaultvalue: Any = defaultvalue
+        self.name = name
 
     def __str__(self) -> str:
-        if self.optional:
-            return '[{}]'.format(self.arg_type)
-        return str(self.arg_type)
+        if self.name is not None:
+            name: str = self.name
+        else:
+            name = self.arg_type.__name__
 
-    def convert(self, arg: str, game: Optional[PlayerGame] = None) -> Any:
+        if self.optional:
+            return '[{}]'.format(name)
+        return name
+
+    def convert(self, arg: str, **kwargs: Any) -> Any:
         if arg == '' and self.optional:
             return self.defaultvalue
 
         if issubclass(self.arg_type, Findable):
-            assert game
-            return self.arg_type.find(arg, game)
+            return self.arg_type.find(arg, **kwargs)
 
         # Gives "Too many arguments for "object" without cast
         return cast(type, self.arg_type)(arg)
@@ -70,6 +79,10 @@ class CommandMessage:
 
     @property
     def author_is_admin(self) -> bool:
+        if self.author.id == OWNER_ID:
+            return True
+        if not isinstance(self.author, discord.Member):
+            return False
         for role in self.author.roles:
             if role.name.lower() == 'game admin':
                 return True
@@ -77,7 +90,7 @@ class CommandMessage:
 
     def convert_arguments(self,
                           arg_types: Sequence[ArgType],
-                          game: Optional[PlayerGame] = None
+                          **kwargs: Any,
                           ) -> typing.List[typing.Any]:
         if len(self.args) > len(arg_types):
             raise CommandException(self, 'Too many arguments.')
@@ -89,13 +102,30 @@ class CommandMessage:
         for arg, arg_type in itertools.zip_longest(
                 self.args, arg_types, fillvalue=''):
             try:
-                new_args.append(arg_type.convert(arg, game))
+                new_args.append(arg_type.convert(arg, **kwargs))
 
             except ValueError:
                 raise CommandException(self, 'Invalid type for argument {}. '
                                        'Not convertible to {}'.format(
                                            arg, arg_type))
         return new_args
+
+
+def format_list_with_conjunction_and_comma(sequence: typing.Iterable[Any],
+                                           conjunction: str) -> str:
+    if not sequence:
+        raise NotImplementedError('Empty list.')
+
+    res = ''
+    str_sequence = list(map(str, sequence))
+
+    for seq in str_sequence[:-2]:
+        res += seq + ', '
+
+    if len(str_sequence) > 1:
+        res += '{} {} '.format(str_sequence[-2], conjunction)
+
+    return res + str_sequence[-1]
 
 
 @dataclass
@@ -107,8 +137,29 @@ class Requirements:
     not_active_player: bool = False
 
     # implies game_only
-    valid_game_states: Container[GameState] = GameState
+    valid_game_states: typing.Iterable[GameState] = GameState
     player_only: bool = False
+
+    def human_readable(self) -> List[str]:
+        result = []
+        if self.public_only:
+            result.append('in a public channel')
+        if self.private_only:
+            result.append('in a private channel')
+        if self.admin_only:
+            result.append("you're an admin")
+        if self.not_active_player:
+            result.append("you're not a player in an active game")
+        if self.game_only or self.player_only:
+            result.append('there is a valid game')
+        if self.player_only:
+            result.append("you're a player in that game")
+        if self.valid_game_states != GameState:
+            result.append(
+                'the game is {}.'.format(
+                    format_list_with_conjunction_and_comma(
+                        self.valid_game_states, 'or')))
+        return result
 
 
 class CommandType():
@@ -326,7 +377,8 @@ class ProposeSeatSwap(CommandType):
         target: Player
         garnets: int
 
-        target, garnets = command.convert_arguments(self.args, command.game)
+        target, garnets = command.convert_arguments(
+            self.args, game=command.game)
 
         if command.player == target:
             raise CommandException(self, 'Cannot swap with yourself.')
@@ -360,7 +412,7 @@ class AcceptSeatSwap(CommandType):
             player_only=True,
             private_only=True,
             valid_game_states=(GameState.RUNNING,))
-        args = (ArgType(Player, optional=True),)  # TODO
+        args = (ArgType(Proposal, optional=True),)  # TODO
         super().__init__('accept', 'acceptproposal', 'acceptincoming',
                          games=games,
                          requirements=requirements,
@@ -371,29 +423,28 @@ class AcceptSeatSwap(CommandType):
         assert command.game
         assert command.player
 
-        source = command.convert_arguments(self.args, command.game)[0]
+        proposal: Proposal = command.convert_arguments(
+            self.args, player=command.player)[0]
         proposals = command.player.proposals
 
         if not proposals:
             raise CommandException(self, 'You have no incoming proposals.')
 
-        if source is not None:
-            try:
-                proposal = next(x for x in proposals if x.source == source)
-            except StopIteration:
-                raise CommandException(
-                    self, 'You have no proposals from {}.'.format(source))
-
-        elif len(proposals) == 1:
-            proposal = proposals[0]
-            source = proposal.source
-
-        else:
+        if proposal is None and len(proposals) != 1:
             raise CommandException(
                 self, 'You have multiple incoming proposals, '
                 'please specify from which player.')
 
-        assert source
+        if proposal is not None:
+            if proposal.target != command.player:
+                raise CommandException(
+                    self, 'You can only accept proposals others sent to you.')
+
+            source = proposal.source
+
+        else:  # len(proposals) == 1:
+            proposal = proposals[0]
+            source = proposal.source
 
         if source.swapped:
             await source.send(
@@ -435,7 +486,7 @@ class CancelSeatSwap(CommandType):
             player_only=True,
             private_only=True,
             valid_game_states=(GameState.RUNNING,))
-        args = (ArgType(Player, optional=True),)
+        args = (ArgType(Proposal, optional=True),)
         super().__init__('cancel', 'reject',
                          'cancelproposal', 'rejectproposal',
                          games=games,
@@ -447,37 +498,31 @@ class CancelSeatSwap(CommandType):
         assert command.game
         assert command.player
 
-        target: Optional[Player]
-
-        # TODO: arg = proposal
-
-        target = command.convert_arguments(
-            self.args, command.game)[0]
+        proposal: Proposal = command.convert_arguments(
+            self.args, player=command.player)[0]
 
         proposals = command.player.proposals
 
         if not proposals:
             raise CommandException(self, 'You have no proposals.')
 
-        if target is not None:
-            try:
-                proposal = next(x for x in proposals if target in x)
-            except StopIteration:
-                raise CommandException(
-                    self, 'You have no proposals with {}.'.format(target))
+        if proposal is None and len(proposals) != 1:
+            raise CommandException(
+                self, 'You have multiple incoming proposals, '
+                'please specify from which player.')
 
-        elif len(proposals) == 1:
+        if proposal is None:
             proposal = proposals[0]
 
+        if proposal.source == command.player:
+            other = proposal.target
         else:
-            raise CommandException(
-                self, 'You have multiple proposals, '
-                'please specify to which player.')
+            other = proposal.source
 
         command.game.cancel_proposal(proposal)
         await command.player.send(
-            'Canceled proposal with {}.'.format(proposal.target))
-        await proposal.target.send(
+            'Canceled proposal with {}.'.format(other))
+        await other.send(
             '{} canceled their proposal with you.'.format(command.player))
 
 
@@ -487,7 +532,12 @@ class CreateBotSwap(CommandType):
             'Propose a seat swap between two bots, optionally bundling '
             'a bribe of garnets. Your bribe must be higher than either bots '
             'highest offer for them to accept it, unless neither has any '
-            'offers..')
+            'offers. If several botswaps have the same bribe they\'re '
+            'resolved in a random order.\n'
+            'If you propose a botswap listing the same bot twice, that is '
+            'interpreted as a bribe for the bot to stay still and not accept '
+            'any other proposals. The bribe still needs to exceed other '
+            'proposals.')
         requirements = Requirements(
             player_only=True,
             private_only=True,
@@ -509,7 +559,7 @@ class CreateBotSwap(CommandType):
         target: BotPlayer
         garnets: int
         source, target, garnets = (
-            command.convert_arguments(self.args, command.game))
+            command.convert_arguments(self.args, game=command.game))
 
         botswaps = [
             x for x in command.game.botswaps
@@ -550,7 +600,8 @@ class CancelBotSwap(CommandType):
 
         source: BotPlayer
         target: BotPlayer
-        source, target = command.convert_arguments(self.args, command.game)
+        source, target = command.convert_arguments(self.args,
+                                                   game=command.game)
 
         try:
             botswap = next(x for x in command.game.botswaps
@@ -588,7 +639,8 @@ class DonateGarnets(CommandType):
 
         target: Player
         garnets: int
-        target, garnets = command.convert_arguments(self.args, command.game)
+        target, garnets = command.convert_arguments(self.args,
+                                                    game=command.game)
 
         await command.player.donate_garnets(target, garnets)
 
@@ -747,7 +799,8 @@ class AssignNumber(CommandType):
 
         target: Player
         number: int
-        target, number = command.convert_arguments(self.args, command.game)
+        target, number = command.convert_arguments(self.args,
+                                                   game=command.game)
 
         command.player.assigned_numbers[target] = number
 
@@ -773,8 +826,8 @@ class UnassignNumber(CommandType):
         assert command.game
         assert command.player
 
-        target: Player = command.convert_arguments(  # type: ignore
-            self.args, command.game)
+        target: Player = command.convert_arguments(
+            self.args, game=command.game)[0]
         number = command.player.assigned_numbers.pop(target)
 
         await command.player.send('Unassigned {} from {}.'.format(
@@ -885,7 +938,7 @@ class RecreateJoin(CommandType):
             valid_game_states=(
                 GameState.GAME_OVER,
                 GameState.STOPPED))
-        help_text = ("Recreates and joins a game if it's finished")
+        help_text = ("Recreates a finished game and joins it.")
         super().__init__('recreatejoin', 'join',
                          games=games,
                          requirements=requirements,
@@ -939,7 +992,7 @@ class AddBot(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game
 
-        name = cast(str, command.convert_arguments(self.args, command.game)[0])
+        name: str = command.convert_arguments(self.args, game=command.game)[0]
 
         if not name.isalnum() or not name[0].isalpha():
             raise CommandException(
@@ -964,7 +1017,8 @@ class RemoveBot(CommandType):
 
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game
-        bot = command.convert_arguments(self.args, command.game)[0]
+        bot: BotPlayer = command.convert_arguments(
+            self.args, game=command.game)[0]
         await command.game.remove_bot(bot)
 
 
@@ -984,7 +1038,8 @@ class RoundLength(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game
 
-        arg = command.convert_arguments(self.args, command.game)[0]
+        arg: Optional[int] = command.convert_arguments(
+            self.args, game=command.game)[0]
 
         if arg is None:
             await command.channel.send(
@@ -1016,50 +1071,98 @@ class Stop(CommandType):  # TODO
 
 # General commands
 class Help(CommandType):
-    def __init__(self) -> None:
-        help_text = ('DM a help text, optionally for a specified command.')
-        # TODO: args = (ArgType(CommandType),)
+    def __init__(self,
+                 command_dict: typing.Dict[str, typing.List[CommandType]]
+                 ) -> None:
+
+        help_text = (
+            'DM a help text, optionally for a specified command.\n'
+            'Some commands are callable by several different aliases, these '
+            'will all be listed when running help on either of them (for '
+            'example, this command is also known as `info`).\n'
+            'In the "Usage" line some parameters may be written with '
+            'brackets. This means they are optional and can be left out. '
+            'The help text will often explain what is the difference between '
+            'specifying the parameter and not.\n'
+        )
+        args = (ArgType(str, optional=True, name='command'),)
         super().__init__('help', 'info',
+                         args=args,
                          help_text=help_text)
+        self.command_dict = command_dict
 
     async def _do_execute(self, command: CommandMessage) -> None:
         user_channel = await seat_typing.SeatChannel.from_user(command.author)
-        await user_channel.send(
-            'Type `!help` to see this help text.\n'
-            'Type `!rules` for an overview and explanation on how the game '
-            'works.\n'
-            'Type `!commands` for a list of the commands available through '
-            'direct messages.\n'
-            'Most of the commands are only available to players that have '
-            'joined the game.\n'
-            'Knowing the rules, most of the commands should be '
-            'self-explanatory, and they will '
-            "give helpful error messages if you're invoking them "
-            "incorrectly.\n"
-            'Help for individual commands is not yet implemented, so you '
-            'will have to experiment or ask :).'
-        )
         if not command.channel.is_dm:
             await command.channel.send('Help text sent via DM.')
+
+        key: Optional[str] = command.convert_arguments(self.args)[0]
+
+        print('{} called help {}'.format(command.player, key))
+
+        if not key:
+            await user_channel.send(strings.HELP_HELP)
+            return
+
+        key = key.lower().lstrip('!').rstrip('.')
+
+        if key not in self.command_dict:
+            raise CommandException(
+                self, 'Cannot find help for unknown command `{}`.'.format(
+                    command.args[0]))
+
+        full_text = ''
+
+        if len(self.command_dict[key]) > 1:
+            full_text = 'Found {} commands matching {}.\n'.format(
+                len(self.command_dict[key]), key)
+
+        for help_cmd in self.command_dict[key]:
+            full_text += 'Help for `{}`:\n'.format(
+                '`, `'.join(str(cmd) for cmd in help_cmd.command_name_list))
+
+            full_text += '  {}\n'.format(
+                help_cmd.help_text.replace('\n', '\n  '))
+
+            full_text += '  Usage: `{}`\n'.format(help_cmd.arg_format)
+            reqs_readable = help_cmd.requirements.human_readable()
+            if reqs_readable:
+                full_text += '  Can only be run if {}\n'.format(
+                    format_list_with_conjunction_and_comma(
+                        reqs_readable, 'and'))
+
+        await user_channel.send(full_text)
 
 
 class Rules(CommandType):
     def __init__(self) -> None:
-        help_text = 'DM an overview of the rules for the Seat Exchange Game'
-        # TODO: args = (ArgType(str),) ? for different subsections of rules
+        help_text = ('Print the rules index, or if a section is specified '
+                     'that section is shown.')
+        requirements = Requirements(
+            private_only=True)
+        args = (ArgType(str, optional=True, name='section'),)
         super().__init__('rules', 'rule',
+                         requirements=requirements,
+                         args=args,
                          help_text=help_text)
 
     async def _do_execute(self, command: CommandMessage) -> None:
-        await command.author.send(
-            RULES_STR.format(
-                url=WIKIPEDIA_URL,
-                start_garnets=20,  # self._game.options['start_garnets'],
-                win_garnets=10,  # self._game.options['win_garnets'],
-                lose_garnets=10,  # self._game.options['x_garnets']*-1
-            ))
-        if not command.channel.is_dm:
-            await command.channel.send('Rules sent via DM.')
+        user_channel = await seat_typing.SeatChannel.from_user(command.author)
+        key: Optional[str] = command.convert_arguments(self.args)[0]
+
+        print('{} called rules {}'.format(command.author, key))
+
+        if not key:
+            await user_channel.send(strings.RULES_INDEX)
+            return
+
+        key = key.lower().rstrip('.')
+
+        if key not in strings.RULES_DICT:
+            raise CommandException(
+                self, "Unknown rules section `{}`.".format(key))
+
+        await user_channel.send(strings.RULES_DICT[key])
 
 
 class Commands(CommandType):
@@ -1093,8 +1196,7 @@ class Source(CommandType):
 class Shutdown(CommandType):
     def __init__(self, client: discord.Client):
         help_text = ('Turns off the bot.')
-        requirements = Requirements(public_only=True,  # User has no roles
-                                    admin_only=True)
+        requirements = Requirements(admin_only=True)
         super().__init__('shutdown', 'forcequit',
                          requirements=requirements,
                          help_text=help_text)

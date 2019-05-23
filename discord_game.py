@@ -35,6 +35,17 @@ class GameState(Enum):
     GAME_OVER = auto()
     STOPPED = auto()
 
+    def __str__(self) -> str:
+        state_strs = {
+            GameState.CREATED: 'newly created',
+            GameState.STARTING: 'starting',
+            GameState.RUNNING: 'running',
+            GameState.PAUSED: 'paused',
+            GameState.GAME_OVER: 'finished',
+            GameState.STOPPED: 'stopped',
+        }
+        return state_strs[self]
+
 
 class DiscordPlayer(Player):
     def __init__(self,
@@ -52,9 +63,9 @@ class DiscordPlayer(Player):
         return cast(str, self.user.display_name)
 
     @classmethod
-    def find(cls, search_key: str, game: PlayerGame) -> DiscordPlayer:
+    def find(cls, search_key: str, **kwargs: Any) -> DiscordPlayer:
         return cast(DiscordPlayer,
-                    super(DiscordPlayer, cls).find(search_key, game))
+                    super(DiscordPlayer, cls).find(search_key, **kwargs))
 
     @property
     def assigned_numbers(self) -> Dict[Player, int]:
@@ -91,9 +102,9 @@ class BotPlayer(Player):
         return self.name.title()
 
     @classmethod
-    def find(cls, search_key: str, game: PlayerGame) -> BotPlayer:
+    def find(cls, search_key: str, **kwargs: Any) -> BotPlayer:
         return cast(BotPlayer,
-                    super(BotPlayer, cls).find(search_key, game))
+                    super(BotPlayer, cls).find(search_key, **kwargs))
 
     def matches(self, search_key: str) -> bool:
         return search_key.lower() == self.name.lower()
@@ -396,7 +407,7 @@ class DiscordGame(PlayerGame):
     async def _message_react_earlynewround(self) -> None:
         react_needed = math.ceil(len(self.discord_players)/2)+1
         emoji = '✅'  # :white_check_mark
-        message = await self.send(
+        message = await self.channel.wait_send(
             'React {} to this message to vote for starting the next round '
             'early. {} reactions needed, only players may vote.'.format(
                 emoji,

@@ -7,6 +7,8 @@ import random
 
 import seat_game
 
+import strings
+
 from seat_typing import PrivateNumber, Seat, SeatException
 
 
@@ -14,7 +16,13 @@ class PlayerGameException(SeatException):
     pass
 
 
-class Proposal:
+class Findable:  # pylint: disable=too-few-public-methods
+    @classmethod
+    def find(cls, search_key: str, **kwargs: Any) -> Findable:
+        raise NotImplementedError('Virtual method matches.')
+
+
+class Proposal(Findable):
     def __init__(self,
                  source: Player,
                  target: Player,
@@ -24,6 +32,19 @@ class Proposal:
         self.garnets: int = garnets
 
         self._lock_up_garnets()
+
+    @classmethod
+    def find(cls, search_key: str, **kwargs: Any) -> Proposal:
+        assert 'player' in kwargs
+        player: Player = kwargs['player']
+
+        for proposal in player.proposals:
+            if (proposal.source.matches(search_key)
+                    or proposal.target.matches(search_key)):
+                return proposal
+        raise PlayerGameException(
+            'Error: Found no {} with a player matching `{}`.'.format(
+                cls.__name__.lower(), search_key))
 
     def __contains__(self, player: Player) -> bool:
         return player in (self.source, self.target)
@@ -67,12 +88,6 @@ class Proposal:
         self._release_garnets()
 
 
-class Findable:  # pylint: disable=too-few-public-methods
-    @classmethod
-    def find(cls, search_key: str, game: PlayerGame) -> Findable:
-        raise NotImplementedError('Virtual method matches.')
-
-
 class Player(Findable):
     """A player in a discord game.
 
@@ -90,7 +105,10 @@ class Player(Findable):
         self.garnets = garnets
 
     @classmethod
-    def find(cls, search_key: str, game: PlayerGame) -> Player:
+    def find(cls, search_key: str, **kwargs: Any) -> Player:
+        assert 'game' in kwargs
+        game: PlayerGame = kwargs['game']
+
         for player in game.players:
             if player.matches(search_key):
                 if isinstance(player, cls):
@@ -185,18 +203,14 @@ class Player(Findable):
 
 
 class PlayerGame:
+    default_options: typing.Dict[str, Any] = strings.DEFAULT_OPTIONS
+
     def __init__(self,
                  options: typing.Optional[typing.Dict[str, Any]] = None):
         self.options = options if options is not None else {}
-        default_options: typing.Dict[str, Any] = {
-            'win_garnets': 10,
-            'x_garnets': -10,
-            'start_garnets': 20,
-            # 'x_count': len(self._game.current_x), # TODO: Move down
-        }
-        for key in default_options:
+        for key in self.default_options:
             if key not in self.options:
-                self.options[key] = default_options[key]
+                self.options[key] = self.default_options[key]
 
         # TODO super()
         self._game: seat_game.SeatGame = seat_game.SeatGame(
@@ -324,8 +338,20 @@ class PlayerGame:
             self._game.new_round()
             return True
 
+        self._award_win_garnets()
+
+        return False
+
+    def _award_win_garnets(self) -> None:
         for player in self.winners:
             player.garnets += self.options['win_garnets']
         for player in self.current_x_players:
             player.garnets += self.options['x_garnets']
-        return False
+
+        streak_length = self._game.win_streak_length
+        middle_garnets = self.options['middle_garnets']
+        if streak_length % 2 == 0:
+            self.winners[streak_length//2] += middle_garnets//2
+            self.winners[streak_length//2-1] += middle_garnets//2
+        else:
+            self.winners[(streak_length-1)//2] += middle_garnets

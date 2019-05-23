@@ -52,7 +52,24 @@ class SeatChannel:
                    *args: typing.Any,
                    sep: str = ' ',
                    start: str = '',
-                   end: str = '') -> discord.Message:
+                   end: str = '') -> None:
+        try:
+            await self._channel.send(
+                start + sep.join(str(arg) for arg in args) + end,
+                wait=False)
+        except discord.errors.Forbidden:
+            print('blocked by {}'.format(self._channel))
+            raise SeatException(
+                "Error: The bot needs to be able to DM you to fully "
+                "function.\n"
+                "Please allow direct messages from server "
+                'members, under "Privacy Settings", for this server.')
+
+    async def wait_send(self,
+                        *args: typing.Any,
+                        sep: str = ' ',
+                        start: str = '',
+                        end: str = '') -> discord.Message:
         try:
             return await self._channel.send(
                 start + sep.join(str(arg) for arg in args) + end)
