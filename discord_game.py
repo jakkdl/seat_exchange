@@ -114,6 +114,13 @@ class BotPlayer(Player):
         # error if somebody tries to.
         return None
 
+    async def received_garnets(self, donater: Player, amount: int) -> None:
+        if amount > 0:
+            await donater.send(
+                '{} thanks you for the kind donation, '
+                'their secret number is {}'.format(
+                    self.name, self.number))
+
 
 class BotSwap(Proposal):
     """A proposal between two bots, sponsored by a player.
@@ -366,14 +373,18 @@ class DiscordGame(PlayerGame):
 
             # to avoid exploit where another player screws a botswap
             # by proposing to both targets
-            if source_proposals[0].source == target_proposals[0].source:
+            if (source_proposals and target_proposals and
+                    source_proposals[0].source == target_proposals[0].source):
                 total = max(source_max + list_get(target_proposals, 1),
                             target_max + list_get(source_proposals, 1))
 
             if (botswap.garnets > total
                     or (not source_proposals and not target_proposals)):
-                botswap.accept()
-                botswap.guarantor.send(
+                try:
+                    botswap.accept()
+                except SeatException:
+                    pass
+                await botswap.guarantor.send(
                     'Your botswap between {} and {} was accepted.'.format(
                         botswap.source, botswap.target))
                 bot_proposals = [x for x in bot_proposals
@@ -392,6 +403,7 @@ class DiscordGame(PlayerGame):
                     ''.format(proposal=proposal))
             except SeatException:
                 pass
+        self.botswaps = set()
 
     async def new_discord_round(self) -> None:
         await self._resolve_botswaps_proposals()
@@ -405,7 +417,7 @@ class DiscordGame(PlayerGame):
         await self._message_react_earlynewround()
 
     async def _message_react_earlynewround(self) -> None:
-        react_needed = math.ceil(len(self.discord_players)/2)+1
+        react_needed = max(2, math.ceil(len(self.discord_players)/2)+1)
         emoji = '✅'  # :white_check_mark
         message = await self.channel.wait_send(
             'React {} to this message to vote for starting the next round '
@@ -486,19 +498,19 @@ class DiscordGame(PlayerGame):
         )
 
     async def _message_new_round(self) -> None:
-        for player in self.discord_players.values():
-            if not self.current_x:
-                message_current_x = ''
-            elif len(self.current_x) == 1:
-                message_current_x = 'The new X is {current_x}.\n'.format(
-                    current_x=self.current_x[0])
-            else:
-                message_current_x = (
-                    'The following numbers are now X: '
-                    '{current_x}.\n'.format(
-                        current_x=' '.join(
-                            [str(x) for x in self.current_x])))
+        if not self.current_x:
+            message_current_x = ''
+        elif len(self.current_x) == 1:
+            message_current_x = 'The new X is {current_x}.\n'.format(
+                current_x=self.current_x[0])
+        else:
+            message_current_x = (
+                'The following numbers are now X: '
+                '{current_x}.\n'.format(
+                    current_x=' '.join(
+                        [str(x) for x in self.current_x])))
 
+        for player in self.discord_players.values():
             await player.send(
                 '**Round {current_round} started.**\n'
                 'All your proposals have been canceled\n'
@@ -515,7 +527,7 @@ class DiscordGame(PlayerGame):
         # TODO: pylint gives missing-format-attribute if i try to acces
         # the attributes of self.game inside the format string.
         # why??
-        await self.send(
+        await self.channel.wait_send(
             '**Round {current_round} started.**\n'
             '```\nSeat  Player\n'
             '{table_layout}```\n'

@@ -1,5 +1,7 @@
 """Defines data types used for typing in the rest of the project."""
 from __future__ import annotations
+
+import asyncio
 import typing
 from typing import cast
 
@@ -54,9 +56,10 @@ class SeatChannel:
                    start: str = '',
                    end: str = '') -> None:
         try:
-            await self._channel.send(
-                start + sep.join(str(arg) for arg in args) + end,
-                wait=False)
+            asyncio.create_task(
+                self._channel.send(
+                    start + sep.join(str(arg) for arg in args) + end)
+            )
         except discord.errors.Forbidden:
             print('blocked by {}'.format(self._channel))
             raise SeatException(

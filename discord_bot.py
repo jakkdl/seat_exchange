@@ -1,5 +1,6 @@
 # pragma pylint: disable=missing-docstring
 from typing import Dict, List
+import datetime
 
 import discord  # type: ignore
 
@@ -70,12 +71,18 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.CancelBotSwap(self.games),
             commands.DonateGarnets(self.games),
 
+            # real life game
+            commands.CreateRealLifeGame(self.games),
+            commands.Reveal(self.games),
+            commands.Swap(self.games),
+            commands.RealLifeSeating(self.games),
+
             # admin
             commands.Shutdown(self),
             commands.ForceStart(self.games),
             commands.ForceStop(self.games),
             commands.ForceNewRound(self.games),
-            # commands.ForceSeatNumbers(self.games),
+            commands.ForceSeatNumbers(self.games),
         ]
 
         for command in self.command_list:
@@ -86,11 +93,12 @@ class DiscordBot(discord.Client):  # type: ignore
                     self.command_dict[command_name].append(command)
 
     async def on_ready(self) -> None:
-        print('We have logged in as {0.user}'.format(self))
-        for guild in self.guilds:
-            for channel in guild.channels:
-                if channel.name == 'testing':
-                    await channel.send('Seat Exchange Bot v0.1')
+        print('Logged in as {0.user} at {1}'.format(
+            self, datetime.datetime.now()))
+        # for guild in self.guilds:
+        #     for channel in guild.channels:
+        #         if channel.name == 'testing':
+        #             await channel.send('Seat Exchange Bot v0.1')
 
     async def on_message(self, message: discord.message) -> None:
         if message.author == self.user:

@@ -6,7 +6,8 @@ as these depend on setting (e.g. players need not be simulated IRL).
 
 Is probably *severely* overtyped, because I wanted to try it out.
 Do not think it's recommended to subclass/NewType int when modifying them
-so much, but hopefully it pays off in the rest of the project."""
+so much, using them as index and generating with range,
+but hopefully it pays off in the rest of the project."""
 from __future__ import annotations
 
 import random
@@ -98,7 +99,7 @@ class SeatGame:
         res = []
 
         for i in range(self.x_count):
-            res.append((i//self.x_count + self.game_round) % self.player_count)
+            res.append((i//self.x_count + self.game_round-1) % self.player_count)
         return cast(List[PrivateNumber], res)
 
     @property
@@ -168,6 +169,9 @@ class SeatGame:
 
         # add seat
         self._seat_numbers.insert(new_seat, new_number)
+
+        # TODO: Hrmmmmmmm
+        self.current_x = self._init_x()
 
         return new_seat
 

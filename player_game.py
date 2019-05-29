@@ -351,7 +351,7 @@ class PlayerGame:
         streak_length = self._game.win_streak_length
         middle_garnets = self.options['middle_garnets']
         if streak_length % 2 == 0:
-            self.winners[streak_length//2] += middle_garnets//2
-            self.winners[streak_length//2-1] += middle_garnets//2
+            self.winners[streak_length//2].garnets += middle_garnets//2
+            self.winners[streak_length//2-1].garnets += middle_garnets//2
         else:
-            self.winners[(streak_length-1)//2] += middle_garnets
+            self.winners[(streak_length-1)//2].garnets += middle_garnets
