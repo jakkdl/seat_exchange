@@ -7,6 +7,7 @@ DEFAULT_OPTIONS = {
     'start_garnets': 20,
     'middle_garnets': 6,
     'garnet_reveal_bribe': 1,
+    'reveal_longest_streak': True,
 }
 
 

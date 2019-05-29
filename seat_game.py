@@ -45,7 +45,7 @@ class SeatGame:
 
         self.game_round = 1
         self._seat_numbers: List[PrivateNumber] = []
-        self.current_x: List[PrivateNumber] = self._init_x()
+        self.current_x: List[PrivateNumber] = self.init_x()
         self.__cached_game_over: Optional[bool] = None
 
         if player_count != 0:
@@ -95,11 +95,15 @@ class SeatGame:
         return [cast(Seat, self._seat_numbers.index(x))
                 for x in self.current_x]
 
-    def _init_x(self) -> List[PrivateNumber]:
+    def init_x(self) -> List[PrivateNumber]:
         res = []
 
         for i in range(self.x_count):
-            res.append((i//self.x_count + self.game_round-1) % self.player_count)
+            res.append(
+                (
+                    (i*self.player_count)//self.x_count
+                    + self.game_round-1)
+                % self.player_count)
         return cast(List[PrivateNumber], res)
 
     @property
@@ -109,8 +113,11 @@ class SeatGame:
     def new_round(self) -> None:
         self.__cached_game_over = None
         self.game_round += 1
-        self.current_x = [cast(PrivateNumber, (x+1) % self.player_count)
-                          for x in self.current_x]
+        if len(self.current_x) == self.x_count:
+            self.current_x = [cast(PrivateNumber, (x+1) % self.player_count)
+                              for x in self.current_x]
+        else:
+            self.current_x = self.init_x()
 
     def add_seat(self) -> Seat:
         """Take a random number between 0 and old number of players, inclusive.
@@ -171,7 +178,7 @@ class SeatGame:
         self._seat_numbers.insert(new_seat, new_number)
 
         # TODO: Hrmmmmmmm
-        self.current_x = self._init_x()
+        self.current_x = self.init_x()
 
         return new_seat
 

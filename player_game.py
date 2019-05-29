@@ -257,6 +257,10 @@ class PlayerGame:
         return self._game.win_streak_length
 
     @property
+    def x_count(self) -> int:
+        return self._game.x_count
+
+    @property
     def current_round(self) -> int:
         return self._game.game_round
 
@@ -311,6 +315,7 @@ class PlayerGame:
     def start_game(self) -> None:
         for player in self._seating_to_player:
             player.garnets = self.options['start_garnets']
+        self._game.current_x = self._game.init_x()
         self._shuffle_players_in_seats()
         self._game.shuffle()
 

@@ -50,7 +50,11 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.Ready(self.games),
             commands.Unready(self.games),
 
+            # Options
+            commands.StreakLength(self.games),
+            commands.XCount(self.games),
             commands.RoundLength(self.games),
+            commands.RevealLongestStreak(self.games),
 
             # game info
             commands.PrintProposals(self.games),

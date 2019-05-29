@@ -1022,7 +1022,7 @@ class AddBot(CommandType):
             valid_game_states=[GameState.CREATED])
         args = (ArgType(str, name='name'),)
         help_text = ('Add a bot with the specified name to the game.')
-        super().__init__('addbot',
+        super().__init__('addbot', 'ab',
                          games=games,
                          requirements=requirements,
                          args=args,
@@ -1092,6 +1092,105 @@ class RoundLength(CommandType):
         command.game.options['round_length'] = arg
         await command.channel.send('Round length set to {} seconds.'.format(
             arg))
+
+
+class StreakLength(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = ('Print or set the streak length.')
+        args = (ArgType(int, optional=True),)
+        requirements = Requirements(
+            public_only=True,
+            game_only=True)
+        super().__init__('streaklength',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text,
+                         tag=CommandTag.OPTIONS)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+
+        arg: Optional[int] = command.convert_arguments(
+            self.args, game=command.game)[0]
+
+        if arg is None:
+            await command.channel.send(
+                'Current streak length is {}.'.format(
+                    command.game.win_streak_length))
+            return
+
+        command.game.options['win_streak_length'] = arg
+        await command.channel.send('Streak length set to {}.'.format(
+            arg))
+
+
+class XCount(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = ('Print or set the X count.')
+        args = (ArgType(int, optional=True),)
+        requirements = Requirements(
+            public_only=True,
+            game_only=True)
+        super().__init__('xcount', 'x_count',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text,
+                         tag=CommandTag.OPTIONS)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+
+        arg: Optional[int] = command.convert_arguments(
+            self.args, game=command.game)[0]
+
+        if arg is None:
+            await command.channel.send(
+                'Current x count is {}.'.format(
+                    command.game.x_count))
+            return
+
+        command.game.options['x_count'] = arg
+        await command.channel.send('X count set to {}.'.format(
+            arg))
+
+
+class RevealLongestStreak(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = ('Print or set whether the longest streak is revealed at '
+                     'the beginning of each round.')
+        args = (ArgType(str, name='bool', optional=True),)
+        requirements = Requirements(
+            public_only=True,
+            game_only=True)
+        super().__init__('reveallongeststreak', 'revealstreak',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text,
+                         tag=CommandTag.OPTIONS)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game
+
+        arg: Optional[str] = command.convert_arguments(
+            self.args, game=command.game)[0]
+
+        if arg is None:
+            await command.channel.send(
+                'Reveal longest streak is set to: {}.'.format(
+                    command.game.options['reveal_longest_streak']))
+            return
+
+        if arg.lower() not in ('true', 'false'):
+            raise CommandException(self, 'argument must be `true` or `false`.')
+
+        argvalue = arg.lower() == 'true'
+
+        command.game.options['reveal_longest_streak'] = argvalue
+        await command.channel.send('Reveal longest streak set to {}.'.format(
+            argvalue))
 
 
 class Pause(CommandType):  # TODO

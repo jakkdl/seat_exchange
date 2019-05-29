@@ -325,6 +325,8 @@ class DiscordGame(PlayerGame):
     async def _round_loop(self) -> None:
         while True:
             current_round = self.current_round
+            if self.options['round_length'] < 0:
+                return
             await asyncio.sleep(self.options['round_length'])
             if self.state != GameState.RUNNING:
                 print('Game not running, quitting silently.')
@@ -335,7 +337,7 @@ class DiscordGame(PlayerGame):
             await self.new_discord_round()
 
     async def _message_start_game(self) -> None:  # TODO
-        await self.channel.send(self._current_options_string())
+        await self.channel.wait_send(self._current_options_string())
         await self._message_new_round()
         await self._message_react_earlynewround()
 
@@ -527,17 +529,24 @@ class DiscordGame(PlayerGame):
         # TODO: pylint gives missing-format-attribute if i try to acces
         # the attributes of self.game inside the format string.
         # why??
+        if self.options['reveal_longest_streak']:
+            message_longest_streak = (
+                'With the new X the longest streak is {streak}.\n'.format(
+                    streak=self.longest_streak))
+        else:
+            message_longest_streak = ''
+
         await self.channel.wait_send(
             '**Round {current_round} started.**\n'
             '```\nSeat  Player\n'
             '{table_layout}```\n'
             "The game didn't finish last round with the old X value.\n"
-            'With the new X the longest streak is {streak}.\n'
+            '{message_longest_streak}'
             'Streak required to win is {win_streak_length}.\n'
             '{message_current_x}' .format(
                 current_round=self.current_round,
                 table_layout=self._get_table_layout_string(),
-                streak=self.longest_streak,
+                message_longest_streak=message_longest_streak,
                 win_streak_length=self.win_streak_length,
                 message_current_x=message_current_x
             ))
