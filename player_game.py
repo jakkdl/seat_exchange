@@ -228,10 +228,6 @@ class PlayerGame:
         return self._seating_to_player[seat]
 
     @property
-    def current_x_players(self) -> List[Player]:
-        return [self.player_in_seat(x) for x in self._game.current_x_seats]
-
-    @property
     def winners(self) -> List[Player]:
         return [self._seating_to_player[seat]
                 for seat in self._game.winners]

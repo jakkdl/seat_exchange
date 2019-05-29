@@ -25,6 +25,28 @@ class StreakResult:
     starting_seat: Seat
     direction: int
 
+def seat_lambda(player: Player):
+    return player.seat
+
+
+class SeatPlayer:
+    """A player in a seat game."""
+    def __init__(self,
+                 game: SeatGame,
+                 number: PrivateNumber) -> None:
+        self.game = game
+        self.number = number
+
+    @property
+    def seat(self) -> Seat:
+        return self.game.seat_of_player(self)
+
+    @property
+    def number(self) -> PrivateNumber:
+        return self.number
+
+
+
 
 class SeatGame:
     """Implements the lowest abstraction of a seat game with only the concepts
@@ -91,9 +113,8 @@ class SeatGame:
         return math.floor((self.player_count-1)/2)
 
     @property
-    def current_x_seats(self) -> List[Seat]:
-        return [cast(Seat, self._seat_numbers.index(x))
-                for x in self.current_x]
+    def current_x_players(self) -> List[Player]:
+        return [p for p in self.players if p.number in self.current_x]
 
     def _init_x(self) -> List[PrivateNumber]:
         res = []
