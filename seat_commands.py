@@ -1498,6 +1498,34 @@ class ForceStop(CommandType):
         await command.game.send('Game stopped.')
 
 
+class ForceSwap(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = 'Swap two players, even if they\`ve already swapped.'
+        requirements = Requirements(
+            game_only=True,
+            admin_only=True)
+        args = (ArgType(Player), ArgType(Player))
+        super().__init__('forceswap',
+                         games=games,
+                         requirements=requirements,
+                         args=args,
+                         help_text=help_text,
+                         tag=CommandTag.REALLIFE)
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        assert command.game is not None
+
+        source: Player
+        target: Player
+
+        source, target = command.convert_arguments(
+            self.args, game=command.game)
+
+        source.swap(target, force=True)
+
+        await command.game.send('Swapped {} and {}.'.format(source, target))
+
+
 class ForceNewRound(CommandType):
     def __init__(self, games: GameDict):
         help_text = ('Forces next round to start.')
@@ -1518,7 +1546,7 @@ class ForceNewRound(CommandType):
         await command.game.force_new_round()
 
 
-class ForceSeatNumbers(CommandType):  # TODO
+class ForceSeatNumbers(CommandType):
     def __init__(self, games: GameDict) -> None:
         help_text = 'Reveal seating and numbers of all the players.'
         requirements = Requirements(

@@ -85,6 +85,7 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.Shutdown(self),
             commands.ForceStart(self.games),
             commands.ForceStop(self.games),
+            commands.ForceSwap(self.games),
             commands.ForceNewRound(self.games),
             commands.ForceSeatNumbers(self.games),
         ]
