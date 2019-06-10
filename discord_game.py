@@ -15,7 +15,7 @@ import discord  # type: ignore
 import strings
 from seat_game import SeatPlayer, SeatGame
 from seat_typing import (Seat, PrivateNumber, SeatException, SeatChannel,
-                         Findable, F)
+                         Findable, GenF)
 
 DEFAULT_ROUND_LENGTH = 300
 DEFAULT_PUBLIC_SWAPS = False
@@ -53,10 +53,10 @@ class CommonPlayer(SeatPlayer, Findable):
                  garnets: int = 0):
         super().__init__()
         self.garnets = garnets
-        self.proposals: ListProposals = []
-        self.botswaps: typing.List[BotSwap] = []
         self.public_seat: Seat = Seat(-1)
 
+        self.proposals: ListProposals = []
+        self.botswaps: typing.List[BotSwap] = []
     @property
     def incoming_proposals(self) -> ListProposals:
         return [p for p in self.proposals
@@ -90,7 +90,7 @@ class CommonPlayer(SeatPlayer, Findable):
         raise NotImplementedError('Virtual method matches.')
 
     @classmethod
-    def find(cls: typing.Type[F], search_key: str, **kwargs: Any) -> F:
+    def find(cls: typing.Type[GenF], search_key: str, **kwargs: Any) -> GenF:
         assert 'game' in kwargs
         game: DiscordGame = kwargs['game']  # DiscordGame?
 
@@ -155,6 +155,29 @@ class DiscordPlayer(CommonPlayer):
 
         return proposal
 
+    def add_botswap(self, botswap: BotSwap) -> None:
+        for party in self, botswap.source, botswap.target:
+            party.botswaps.append(botswap)
+
+    def accept_proposal(self, proposal: Proposal[CommonPlayer]) -> None:
+        proposal.accept()
+        for party in self, proposal.source:
+            party.proposals.remove(proposal)
+
+    def cancel_proposal(self, proposal: Proposal[CommonPlayer]) -> None:
+        proposal.cancel()
+        self.proposals.remove(proposal)
+        if proposal.source == self:
+            proposal.target.proposals.remove(proposal)
+        else:
+            proposal.source.proposals.remove(proposal)
+
+    def cancel_botswap(self, botswap: BotSwap) -> None:
+        botswap.cancel()
+        for party in self, botswap.source, botswap.target:
+            party.botswaps.remove(botswap)
+
+
     async def donate_garnets(self, target: CommonPlayer, amount: int) -> None:
         if amount > self.garnets:
             raise DiscordGameException(
@@ -211,7 +234,7 @@ class Proposal(Findable, typing.Generic[CP]):
         self._lock_up_garnets()
 
     @classmethod
-    def find(cls: typing.Type[F], search_key: str, **kwargs: Any) -> F:
+    def find(cls: typing.Type[GenF], search_key: str, **kwargs: Any) -> GenF:
         assert 'player' in kwargs
         player: DiscordPlayer = kwargs['player']
 
@@ -386,7 +409,6 @@ class DiscordGame(SeatGame[CommonPlayer]):
         # TODO: Remove, but requires some refactoring
         self.discord_players: Dict[discord.User, DiscordPlayer] = {}
         self.bots: Dict[str, BotPlayer] = {}
-        self.botswaps: typing.Set[BotSwap] = set()
 
 
     async def send(self,
@@ -485,12 +507,14 @@ class DiscordGame(SeatGame[CommonPlayer]):
             return proposal.garnets
 
         bot_proposals: ListProposals = []
+        botswap_set: typing.Set[BotSwap] = set()
 
         for bot in self.bots.values():
             bot_proposals += [x for x in bot.incoming_proposals
                               if not x.source.swapped]
+            botswap_set.update(bot.botswaps)
 
-        botswaps = list(self.botswaps)
+        botswaps = list(botswap_set)
         random.shuffle(botswaps)
         botswaps.sort(key=garnet_key, reverse=True)
 
@@ -545,7 +569,6 @@ class DiscordGame(SeatGame[CommonPlayer]):
                     ''.format(proposal=proposal))
             except SeatException:
                 pass
-        self.botswaps = set()
 
     async def new_discord_round(self) -> None:
         await self._resolve_botswaps_proposals()

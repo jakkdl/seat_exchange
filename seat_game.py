@@ -61,10 +61,10 @@ class SeatPlayer:
         self.swapped = False
 
 
-P = typing.TypeVar('P', bound=SeatPlayer)
+GenP = typing.TypeVar('GenP', bound=SeatPlayer)
 
 
-class SeatGame(typing.Generic[P]):
+class SeatGame(typing.Generic[GenP]):
     """Implements the lowest abstraction of a seat game with only the concepts
     seats, numbers and X's.
 
@@ -81,7 +81,7 @@ class SeatGame(typing.Generic[P]):
             self._options = options
 
         self.current_round = 1
-        self.players: List[P] = []
+        self.players: List[GenP] = []
         self.current_x: List[PrivateNumber] = []
         self.__cached_streak_result: Optional[StreakResult] = None
 
@@ -115,14 +115,14 @@ class SeatGame(typing.Generic[P]):
 
         return math.floor((self.player_count-1)/2)
 
-    def player_in_seat(self, seat: Seat) -> P:
+    def player_in_seat(self, seat: Seat) -> GenP:
         for player in self.players:
             if player.seat == seat:
                 return player
         raise SeatException('Found no player in seat {}'.format(seat))
 
     @property
-    def current_x_players(self) -> List[P]:
+    def current_x_players(self) -> List[GenP]:
         return [p for p in self.players if p.number in self.current_x]
 
     def _init_x(self) -> List[PrivateNumber]:
@@ -145,7 +145,7 @@ class SeatGame(typing.Generic[P]):
         self.current_x = [(x+1) % self.player_count
                           for x in self.current_x]
 
-    def add_player(self, player: P) -> None:
+    def add_player(self, player: GenP) -> None:
         """Add a player with a random number and seat, that doesn't increase
         the streak length."""
         valid_numbers = [*PrivateNumber.range(self.player_count)]
@@ -182,7 +182,7 @@ class SeatGame(typing.Generic[P]):
 
         raise SeatException('Unable to add player. Weird?')
 
-    def remove_player(self, player: P) -> None:
+    def remove_player(self, player: GenP) -> None:
         self.__cached_streak_result = None
 
         for other in self.players:
@@ -290,7 +290,7 @@ class SeatGame(typing.Generic[P]):
                             Seat(starting_seat), direction)
 
     @property
-    def winners(self) -> List[P]:
+    def winners(self) -> List[GenP]:
         res = self.longest_streak
 
         return [
@@ -300,7 +300,7 @@ class SeatGame(typing.Generic[P]):
         ]
 
     @property
-    def table_layout(self) -> List[P]:
+    def table_layout(self) -> List[GenP]:
         res = self.players.copy()
         res.sort(key=lambda x: x.seat, reverse=True)
         return res

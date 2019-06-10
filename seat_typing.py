@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import typing
-from dataclasses import dataclass
-
 import discord  # type: ignore
 
 DiscordChannel = typing.Union[discord.TextChannel,
@@ -18,11 +16,11 @@ class SeatException(Exception):
 # mypy-annotation-for-classmethod-returning-instance
 # https://stackoverflow.com/questions/44640479/
 
-F = typing.TypeVar('F', bound='Findable')
+GenF = typing.TypeVar('GenF', bound='Findable')
 
 class Findable:  # pylint: disable=too-few-public-methods
     @classmethod
-    def find(cls: typing.Type[F], search_key: str, **kwargs: typing.Any) -> F:
+    def find(cls: typing.Type[GenF], search_key: str, **kwargs: typing.Any) -> GenF:
         raise NotImplementedError('Virtual method matches.')
 
 
