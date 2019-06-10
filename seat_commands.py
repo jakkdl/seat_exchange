@@ -6,13 +6,12 @@ import itertools
 import asyncio
 from enum import Enum, auto
 import typing
-from typing import Optional, List, Any, Sequence, cast
+from typing import Optional, List, Any, Sequence
 from dataclasses import dataclass
 
 import discord  # type: ignore
 
 import seat_typing
-from seat_game import SeatPlayer
 import discord_game
 from discord_game import (DiscordGame, GameState,
                           DiscordPlayer, BotPlayer, CommonPlayer)
@@ -62,7 +61,7 @@ class ArgType:
             return self.arg_type.find(arg, **kwargs)
 
         # Gives "Too many arguments for "object" without cast
-        return cast(type, self.arg_type)(arg)
+        return typing.cast(type, self.arg_type)(arg)
 
 
 class CommandMessage:
@@ -1266,7 +1265,7 @@ class Reveal(CommandType):
                      'for {} seconds.'.format(REVEAL_TIME))
         requirements = Requirements(
             real_life_game_only=True)
-        args = (ArgType(SeatPlayer),)
+        args = (ArgType(CommonPlayer),)
         super().__init__('reveal',
                          games=games,
                          requirements=requirements,
@@ -1276,7 +1275,7 @@ class Reveal(CommandType):
 
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game is not None
-        player: SeatPlayer
+        player: CommonPlayer
 
         player = command.convert_arguments(
             self.args, game=command.game)[0]
@@ -1295,7 +1294,7 @@ class Swap(CommandType):
         help_text = 'Swap two players'
         requirements = Requirements(
             real_life_game_only=True)
-        args = (ArgType(SeatPlayer), ArgType(SeatPlayer))
+        args = (ArgType(CommonPlayer), ArgType(CommonPlayer))
         super().__init__('swap',
                          games=games,
                          requirements=requirements,
@@ -1306,8 +1305,8 @@ class Swap(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game is not None
 
-        source: SeatPlayer
-        target: SeatPlayer
+        source: CommonPlayer
+        target: CommonPlayer
 
         source, target = command.convert_arguments(
             self.args, game=command.game)

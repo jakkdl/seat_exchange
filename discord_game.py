@@ -719,7 +719,7 @@ class DiscordGame(SeatGame[CommonPlayer]):
             '{message_current_x}' .format(
                 current_round=self.current_round,
                 table_layout=self._get_table_layout_string(),
-                streak=self.longest_streak,
+                streak=self.longest_streak.longest_streak,
                 win_streak_length=self.win_streak_length,
                 message_current_x=message_current_x
             ))
@@ -764,6 +764,7 @@ class DiscordGame(SeatGame[CommonPlayer]):
         players = self.players.copy()
         players.sort(reverse=True, key=lambda x: x.seat)
         # I'm sorry
+        print(type(self.players[0].seat))
         return ''.join([
             '{0:>3}   {1}\n'.format(
                 player.seat,

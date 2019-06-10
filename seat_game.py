@@ -48,10 +48,15 @@ class SeatPlayer:
         self.seat = Seat(-1)
         self.swapped = False
 
+    def __str__(self) -> str:
+        return 'Number: {} Seat: {}'.format(self.number, self.seat)
+
     def swap(self, target: SeatPlayer, force: bool = False) -> None:
         if not force:
             for player in self, target:
-                raise SeatException('{} has already swapped.'.format(player))
+                if player.swapped:
+                    raise SeatException(
+                        '{} has already swapped.'.format(player))
 
         self.seat, target.seat = target.seat, self.seat
         self.swapped = True
@@ -148,8 +153,8 @@ class SeatGame(typing.Generic[GenP]):
     def add_player(self, player: GenP) -> None:
         """Add a player with a random number and seat, that doesn't increase
         the streak length."""
-        valid_numbers = [*PrivateNumber.range(self.player_count)]
-        valid_seats = [*Seat.range(self.player_count)]
+        valid_numbers = [*PrivateNumber.range(self.player_count+1)]
+        valid_seats = [*Seat.range(self.player_count+1)]
 
         number: PrivateNumber
         seat: Seat
