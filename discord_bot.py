@@ -18,11 +18,17 @@ class DiscordBotException(SeatException):
     pass
 
 
+class DiscordUser():
+    """Wrapper around discord.User"""
+    def __init__(user: discord.User):
+        self.user = user
+
+
 class DiscordBot(discord.Client):  # type: ignore
     def __init__(self) -> None:
         super().__init__()
         self.games: Dict[SeatChannel, DiscordGame] = {}
-        # self.players: Dict[discord.user, DiscordGame] = {}
+        self.users: Dict[discord.user, DiscordUser] = {}
 
         self.command_list: List[commands.CommandType] = []
         self.command_dict: Dict[str, List[commands.CommandType]] = {}
@@ -37,58 +43,10 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.Commands(self.command_list),
             commands.Source(),
 
-            # Game management
             commands.Create(self.games),
-            commands.Recreate(self.games),
-            commands.Join(self.games),
             commands.CreateJoin(self.games),
-            commands.RecreateJoin(self.games),
-
-            commands.Leave(self.games),
-            commands.AddBot(self.games),
-            commands.RemoveBot(self.games),
-
-            commands.Ready(self.games),
-            commands.Unready(self.games),
-
-            # Options
-            commands.StreakLength(self.games),
-            commands.XCount(self.games),
-            commands.RoundLength(self.games),
-            commands.RevealLongestStreak(self.games),
-
-            # game info
-            commands.PrintProposals(self.games),
-            commands.PrintBotSwaps(self.games),
-            commands.PrintPlayers(self.games),
-            commands.PrintGarnets(self.games),
-
-            commands.PrintSeating(self.games),
-            commands.AssignNumber(self.games),
-            commands.UnassignNumber(self.games),
-
-            # gameplay
-            commands.ProposeSeatSwap(self.games),
-            commands.AcceptSeatSwap(self.games),
-            commands.CancelSeatSwap(self.games),
-
-            commands.CreateBotSwap(self.games),
-            commands.CancelBotSwap(self.games),
-            commands.DonateGarnets(self.games),
-
-            # real life game
             commands.CreateRealLifeGame(self.games),
-            commands.Reveal(self.games),
-            commands.Swap(self.games),
-            commands.RealLifeSeating(self.games),
-
-            # admin
             commands.Shutdown(self),
-            commands.ForceStart(self.games),
-            commands.ForceStop(self.games),
-            commands.ForceSwap(self.games),
-            commands.ForceNewRound(self.games),
-            commands.ForceSeatNumbers(self.games),
         ]
 
         for command in self.command_list:
@@ -115,10 +73,15 @@ class DiscordBot(discord.Client):  # type: ignore
 
         command = message.content.split(' ')[0][1:]
         channel = SeatChannel(message.channel)
+
+        if message.author not in self.users:
+            self.users[message.author] = DiscordUser(message.author)
+        user = self.users[message.author]
         # parameters = message.content.split(' ')[1:]
 
         if command in self.command_dict:
-            command_message = commands.CommandMessage(message, channel)
+            command_message = commands.CommandMessage(
+                message, channel, user)
             errors = []
             for matching_command in self.command_dict[command]:
                 try:
@@ -131,13 +94,11 @@ class DiscordBot(discord.Client):  # type: ignore
 
     async def on_reaction_add(self,
                               reaction: discord.Reaction,
-                              user: discord.User) -> None:  # TODO
-        print('reaction added')
+                              user: discord.User) -> None:
         message = reaction.message
         channel = SeatChannel(message.channel)
 
         if channel not in self.games:
-            print('no channel')
             return
 
         game = self.games[channel]

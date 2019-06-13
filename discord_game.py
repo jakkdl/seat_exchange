@@ -414,10 +414,74 @@ class DiscordGame(SeatGame[CommonPlayer]):
         self.channel: SeatChannel = channel
         self.state: GameState = GameState.CREATED
         self.reactable_messages: Dict[discord.Message, ReactFunction] = {}
+        self.command_list: List[commands.CommandType] = []
+        self.command_dict: Dict[str, List[commands.CommandType]] = {}
 
         # TODO: Remove, but requires some refactoring
         self.discord_players: Dict[discord.User, DiscordPlayer] = {}
         self.bots: Dict[str, BotPlayer] = {}
+
+        self._initialize_commands()
+
+    def _initialize_commands(self) -> None:
+        self.command_list += [
+            # Game management
+            commands.Join(self.games),
+            commands.Recreate(self.games),
+            commands.RecreateJoin(self.games),
+
+            commands.Leave(self.games),
+            commands.AddBot(self.games),
+            commands.RemoveBot(self.games),
+
+            commands.Ready(self.games),
+            commands.Unready(self.games),
+
+            # Options
+            commands.StreakLength(self.games),
+            commands.XCount(self.games),
+            commands.RoundLength(self.games),
+            commands.RevealLongestStreak(self.games),
+
+            # game info
+            commands.PrintProposals(self.games),
+            commands.PrintBotSwaps(self.games),
+            commands.PrintPlayers(self.games),
+            commands.PrintGarnets(self.games),
+
+            commands.PrintSeating(self.games),
+            commands.AssignNumber(self.games),
+            commands.UnassignNumber(self.games),
+
+            # gameplay
+            commands.ProposeSeatSwap(self.games),
+            commands.AcceptSeatSwap(self.games),
+            commands.CancelSeatSwap(self.games),
+
+            commands.CreateBotSwap(self.games),
+            commands.CancelBotSwap(self.games),
+            commands.DonateGarnets(self.games),
+
+            # real life game
+            commands.Reveal(self.games),
+            commands.Swap(self.games),
+            commands.RealLifeSeating(self.games),
+
+            # admin
+            commands.ForceStart(self.games),
+            commands.ForceStop(self.games),
+            commands.ForceSwap(self.games),
+            commands.ForceNewRound(self.games),
+            commands.ForceSeatNumbers(self.games),
+        ]
+
+        for command in self.command_list:
+            for command_name in command.command_name_list:
+                if command_name not in self.command_dict:
+                    self.command_dict[command_name] = [command]
+                else:
+                    self.command_dict[command_name].append(command)
+
 
     async def send(self,
                    *args: Any,
