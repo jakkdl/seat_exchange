@@ -18,9 +18,11 @@ class SeatException(Exception):
 
 GenF = typing.TypeVar('GenF', bound='Findable')
 
+
 class Findable:  # pylint: disable=too-few-public-methods
     @classmethod
-    def find(cls: typing.Type[GenF], search_key: str, **kwargs: typing.Any) -> GenF:
+    def find(cls: typing.Type[GenF],
+             search_key: str, **kwargs: typing.Any) -> GenF:
         raise NotImplementedError('Virtual method matches.')
 
 
@@ -44,6 +46,9 @@ class PrivateNumber(int):
 class Seat(int):
     def __str__(self) -> str:
         return chr(ord('A') + self)
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
     def __add__(self, other: typing.Any) -> Seat:
         return Seat(super().__add__(other))

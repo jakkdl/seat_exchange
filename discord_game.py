@@ -57,6 +57,7 @@ class CommonPlayer(SeatPlayer, Findable):
 
         self.proposals: ListProposals = []
         self.botswaps: typing.List[BotSwap] = []
+
     @property
     def incoming_proposals(self) -> ListProposals:
         return [p for p in self.proposals
@@ -159,6 +160,10 @@ class DiscordPlayer(CommonPlayer):
         for party in self, botswap.source, botswap.target:
             party.botswaps.append(botswap)
 
+    # TODO: Move to Proposal, so there is only one visible entry point
+    # having both Player.accept_proposal and proposal.accept it's not
+    # intuitive which one should be called from the outside.
+
     def accept_proposal(self, proposal: Proposal[CommonPlayer]) -> None:
         proposal.accept()
         for party in self, proposal.source:
@@ -176,7 +181,6 @@ class DiscordPlayer(CommonPlayer):
         botswap.cancel()
         for party in self, botswap.source, botswap.target:
             party.botswaps.remove(botswap)
-
 
     async def donate_garnets(self, target: CommonPlayer, amount: int) -> None:
         if amount > self.garnets:
@@ -306,6 +310,11 @@ class BotSwap(Proposal[BotPlayer]):
         self.guarantor = guarantor
         super().__init__(source, target, garnets)
 
+    def __repr__(self) -> str:
+        return ('BotSwap(source={}, target={}, guarantor={}, garnets={})'
+                ''.format(self.source, self.target,
+                          self.guarantor, self.garnets))
+
     def __str__(self) -> str:
         return ('Botswap between {} and {} '
                 'guaranteed by {} with {} garnets.'.format(
@@ -410,7 +419,6 @@ class DiscordGame(SeatGame[CommonPlayer]):
         self.discord_players: Dict[discord.User, DiscordPlayer] = {}
         self.bots: Dict[str, BotPlayer] = {}
 
-
     async def send(self,
                    *args: Any,
                    **kwargs: str) -> discord.Message:
@@ -475,6 +483,9 @@ class DiscordGame(SeatGame[CommonPlayer]):
         if self.state not in (GameState.CREATED, GameState.STARTING):
             raise DiscordGameException(
                 'Error: Invalid game state: {}'.format(self.state))
+
+        for player in self.players:
+            player.new_round()
 
         await self._message_start_game()
         self.state = GameState.RUNNING
@@ -550,9 +561,10 @@ class DiscordGame(SeatGame[CommonPlayer]):
                     botswap.accept()
                 except SeatException:
                     pass
-                await botswap.guarantor.send(
-                    'Your botswap between {} and {} was accepted.'.format(
-                        botswap.source, botswap.target))
+                else:
+                    await botswap.guarantor.send(
+                        'Your botswap between {} and {} was accepted.'.format(
+                            botswap.source, botswap.target))
                 bot_proposals = [x for x in bot_proposals
                                  if cast(BotPlayer, x.target) not in botswap]
 
@@ -561,14 +573,15 @@ class DiscordGame(SeatGame[CommonPlayer]):
         for proposal in bot_proposals:
             try:
                 proposal.accept()
+            except SeatException:
+                pass
+            else:
                 await proposal.source.send(
                     '{proposal.target} accepted your proposal, '
                     'gaining {proposal.garnets}.\n'
                     'Your new seat is {proposal.source.seat}.\n'
                     "{proposal.target}'s new seat is {proposal.target.seat}"
                     ''.format(proposal=proposal))
-            except SeatException:
-                pass
 
     async def new_discord_round(self) -> None:
         await self._resolve_botswaps_proposals()
@@ -579,6 +592,8 @@ class DiscordGame(SeatGame[CommonPlayer]):
             await self._message_game_over()
             return
 
+        for player in self.players:
+            player.new_round()
         self.new_round()
 
         await self._message_new_round()
@@ -625,7 +640,8 @@ class DiscordGame(SeatGame[CommonPlayer]):
         if self.state == GameState.STARTING:
             self.state = GameState.CREATED
 
-        player = DiscordPlayer(user)
+        player = DiscordPlayer(user,
+                               garnets=self.options['start_garnets'])
         self.discord_players[user] = player
         self.add_player(player)
         await self.send('{} joined the game'.format(player))
@@ -762,18 +778,18 @@ class DiscordGame(SeatGame[CommonPlayer]):
 
     def _get_table_layout_string(self) -> str:
         players = self.players.copy()
-        players.sort(reverse=True, key=lambda x: x.seat)
+        players.sort(key=lambda x: x.public_seat)
         # I'm sorry
         print(type(self.players[0].seat))
         return ''.join([
-            '{0:>3}   {1}\n'.format(
-                player.seat,
+            '{0}     {1}\n'.format(
+                player.public_seat,
                 player)
-            for player in self.players])
+            for player in players])
 
     def _get_winner_string(self) -> str:
         return '\n'.join([
-            '{0.seat:>3} {0.number:>5}   {0}'.format(winner)
+            '  {0.seat} {0.number:>5}   {0}'.format(winner)
             for winner in self.winners
         ])
 

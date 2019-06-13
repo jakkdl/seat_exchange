@@ -11,7 +11,7 @@ but hopefully it pays off in the rest of the project."""
 from __future__ import annotations
 
 import math
-import copy
+import random
 import typing
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
@@ -40,6 +40,13 @@ class StreakResult:
             return self.longest_streak <= other
         return NotImplemented
 
+    def __eq__(self, other: typing.Any) -> bool:
+        if isinstance(other, StreakResult):
+            return self.longest_streak == other.longest_streak
+        if isinstance(other, int):
+            return self.longest_streak == other
+        return NotImplemented
+
 
 class SeatPlayer:
     """A player in a seat game."""
@@ -47,6 +54,10 @@ class SeatPlayer:
         self.number = PrivateNumber(-1)
         self.seat = Seat(-1)
         self.swapped = False
+
+    def __repr__(self) -> str:
+        return 'SeatPlayer(number={}, seat={}, swapped={}'.format(
+            self.number, self.seat, self.swapped)
 
     def __str__(self) -> str:
         return 'Number: {} Seat: {}'.format(self.number, self.seat)
@@ -160,7 +171,8 @@ class SeatGame(typing.Generic[GenP]):
         seat: Seat
 
         longest_streak = self.longest_streak
-        current_players = copy.deepcopy(self.players)
+        random.shuffle(valid_numbers)
+        random.shuffle(valid_seats)
 
         for number in valid_numbers:
             for seat in valid_seats:
@@ -178,17 +190,16 @@ class SeatGame(typing.Generic[GenP]):
                 self.current_x = self._init_x()
                 self.__cached_streak_result = None
 
-                if (self.longest_streak <= longest_streak
-                        or self.longest_streak < 3
-                        or len(self.players) < 4):
+                if self.longest_streak == 2 or len(self.players) < 4:
                     return
 
-                self.players = copy.deepcopy(current_players)
+                self.remove_player(player)
 
         raise SeatException('Unable to add player. Weird?')
 
     def remove_player(self, player: GenP) -> None:
         self.__cached_streak_result = None
+        self.players.remove(player)
 
         for other in self.players:
             if other.seat >= player.seat:

@@ -781,7 +781,11 @@ class PrintSeating(CommandType):
     def __init__(self, games: GameDict) -> None:
         requirements = Requirements(
             game_only=True,
-            player_only=True)
+            player_only=True,
+            valid_game_states=[GameState.RUNNING,
+                              GameState.PAUSED,
+                              GameState.GAME_OVER,
+                              GameState.STOPPED])
         help_text = ('Print seat and assigned numbers for all players.')
         super().__init__('seating', 'printseating',
                          games=games,
@@ -797,7 +801,7 @@ class PrintSeating(CommandType):
 
         await command.player.send(
             '\n'.join(
-                '{0:>3} {1:>4} {2}'.format(
+                '{0} {1:>2} {2}'.format(
                     player.seat,
                     assigned_numbers.get(player, ''),
                     player)

@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # pragma pylint: disable=missing-docstring
 from typing import Dict, List
 import datetime
