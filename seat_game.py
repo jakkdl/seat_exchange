@@ -10,12 +10,13 @@ so much, using them as index and generating with range,
 but hopefully it pays off in the rest of the project."""
 from __future__ import annotations
 
-import random
 import math
-from typing import List, Iterable, Dict, Optional, Any, cast
+import random
+import typing
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 
-from seat_typing import Seat, PrivateNumber
+from seat_typing import Seat, PrivateNumber, SeatException
 
 
 @dataclass
@@ -25,8 +26,61 @@ class StreakResult:
     starting_seat: Seat
     direction: int
 
+    def __lt__(self, other: typing.Any) -> bool:
+        if isinstance(other, StreakResult):
+            return self.longest_streak < other.longest_streak
+        if isinstance(other, int):
+            return self.longest_streak < other
+        return NotImplemented
 
-class SeatGame:
+    def __le__(self, other: typing.Any) -> bool:
+        if isinstance(other, StreakResult):
+            return self.longest_streak <= other.longest_streak
+        if isinstance(other, int):
+            return self.longest_streak <= other
+        return NotImplemented
+
+    def __eq__(self, other: typing.Any) -> bool:
+        if isinstance(other, StreakResult):
+            return self.longest_streak == other.longest_streak
+        if isinstance(other, int):
+            return self.longest_streak == other
+        return NotImplemented
+
+
+class SeatPlayer:
+    """A player in a seat game."""
+    def __init__(self) -> None:
+        self.number = PrivateNumber(-1)
+        self.seat = Seat(-1)
+        self.swapped = False
+
+    def __repr__(self) -> str:
+        return 'SeatPlayer(number={}, seat={}, swapped={}'.format(
+            self.number, self.seat, self.swapped)
+
+    def __str__(self) -> str:
+        return 'Number: {} Seat: {}'.format(self.number, self.seat)
+
+    def swap(self, target: SeatPlayer, force: bool = False) -> None:
+        if not force:
+            for player in self, target:
+                if player.swapped:
+                    raise SeatException(
+                        '{} has already swapped.'.format(player))
+
+        self.seat, target.seat = target.seat, self.seat
+        self.swapped = True
+        target.swapped = True
+
+    def new_round(self) -> None:
+        self.swapped = False
+
+
+GenP = typing.TypeVar('GenP', bound=SeatPlayer)
+
+
+class SeatGame(typing.Generic[GenP]):
     """Implements the lowest abstraction of a seat game with only the concepts
     seats, numbers and X's.
 
@@ -35,39 +89,25 @@ class SeatGame:
     and the value is the number in that seat."""
 
     def __init__(self,
-                 player_count: int = 0,
-                 options: Optional[Dict[str, Any]] = None):
+                 options: Optional[Dict[str, Any]] = None) -> None:
 
         self._options: Dict[str, Any] = {}
 
         if options:
             self._options = options
 
-        self.game_round = 1
-        self._seat_numbers: List[PrivateNumber] = []
-        self.current_x: List[PrivateNumber] = self.init_x()
-        self.__cached_game_over: Optional[bool] = None
-
-        if player_count != 0:
-            self._seat_numbers = cast(List[PrivateNumber],
-                                      list(range(0, player_count)))
-            self.shuffle()
-
-    # swaps the numbers in two seats
-    def swap_seats(self, first: Seat, second: Seat) -> None:
-        self.__cached_game_over = None
-        self._seat_numbers[first], self._seat_numbers[second] = (
-            self._seat_numbers[second], self._seat_numbers[first])
-
-    def number_in_seat(self, seat: Seat) -> PrivateNumber:
-        return self._seat_numbers[seat]
+        self.current_round = 1
+        self.players: List[GenP] = []
+        self.current_x: List[PrivateNumber] = []
+        self.__cached_streak_result: Optional[StreakResult] = None
 
     @property
     def x_count(self) -> int:
         if 'x_count' in self._options:
-            return cast(int, self._options['x_count'])
+            assert isinstance(self._options['x_count'], int)
+            return self._options['x_count']
 
-        if len(self._seat_numbers) < 6:
+        if len(self.players) < 6:
             return 0
 
         return 1
@@ -75,7 +115,8 @@ class SeatGame:
     @property
     def win_streak_length(self) -> int:
         if 'win_streak_length' in self._options:
-            return cast(int, self._options['win_streak_length'])
+            assert isinstance(self._options['win_streak_length'], int)
+            return self._options['win_streak_length']
 
         count = self.player_count
 
@@ -90,138 +131,109 @@ class SeatGame:
 
         return math.floor((self.player_count-1)/2)
 
+    def player_in_seat(self, seat: Seat) -> GenP:
+        for player in self.players:
+            if player.seat == seat:
+                return player
+        raise SeatException('Found no player in seat {}'.format(seat))
+
     @property
-    def current_x_seats(self) -> List[Seat]:
-        return [cast(Seat, self._seat_numbers.index(x))
-                for x in self.current_x]
+    def current_x_players(self) -> List[GenP]:
+        return [p for p in self.players if p.number in self.current_x]
 
     def init_x(self) -> List[PrivateNumber]:
         res = []
 
+        # Divide the series of numbers into x_count parts, take the beginning
+        # of each part and offset by number of rounds-1, mod player count
         for i in range(self.x_count):
             res.append(
                 (
                     (i*self.player_count)//self.x_count
-                    + self.game_round-1)
+                    + self.current_round-1)
                 % self.player_count)
-        return cast(List[PrivateNumber], res)
+        return res
 
     @property
     def player_count(self) -> int:
-        return len(self._seat_numbers)
+        return len(self.players)
 
     def new_round(self) -> None:
-        self.__cached_game_over = None
-        self.game_round += 1
+        self.__cached_streak_result = None
+        self.current_round += 1
         if len(self.current_x) == self.x_count:
-            self.current_x = [cast(PrivateNumber, (x+1) % self.player_count)
+            self.current_x = [(x+1) % self.player_count
                               for x in self.current_x]
         else:
             self.current_x = self.init_x()
 
-    def add_seat(self) -> Seat:
-        """Take a random number between 0 and old number of players, inclusive.
-        Increment all old numbers higher or equal by 1.
-        Take a random seat between 0 and old number of players (inclusive).
-        Increment all old seats higher or equal to that by 1.
+    def add_player(self, player: GenP) -> None:
+        """Add a player with a random number and seat, that doesn't increase
+        the streak length."""
+        valid_numbers = [*PrivateNumber.range(self.player_count+1)]
+        valid_seats = [*Seat.range(self.player_count+1)]
 
-        We also increment X by 1 if it's higher than the added number. This
-        to avoid the same player being X twice.
+        number: PrivateNumber
+        seat: Seat
 
-        Previous algorithm was:
-        Take a random number, giving the seat with that number last.
-        Take a random seat, moving the number in that seat last.
-        Increase current X by 1. Recalculate win_streak_length.
+        longest_streak = self.longest_streak
+        random.shuffle(valid_numbers)
+        random.shuffle(valid_seats)
 
-        This was changed:
-        1. to be consistent with seat removal
-        2. Number-wise, not to screw up a specific player.
-        2.1 If the game has
-        started all higher numbers will know the new player has a lower number
-        than them, and all lower numbers will know the new player has a higher
-        number. This gives a minor information advantage to all old players.
-        (although crucially if your two neighbours are communicating they can
-        figure it out). This is maybe outweighed by their streak & alliances
-        being screwed with. Maybe better simply to announce the new players
-        number.
-        2.2 But in the other case only the old owner of the number
-        will know the new players number, and the new player will know the old
-        players number, which is very unfair to the old player, who not only
-        has to find new friends, his secret number was also revealed.
-        3. Seat-wise, not to screw up specific players.
-        3.1 There's no info being given out, but if the old owner of the seat
-        had fought hard for it he's now randomly last in the circle.
-        Players arranging around the end of the circle is now also at a
-        disadvantage, and therefore have a stake against new player joining.
-        3.2 In the new circle one team may be screwed if the new player
-        randomly takes a spot within their streak. This is unfortunate, but at
-        least the risk of this is fairly spread amongst all players.
-        Players curently owning a series of chairs have an incentive to
-        campaign against new players joining, but if you're late into the game
-        you probably shouldn't add new players.
-        """
-        self.__cached_game_over = None
-        old_player_count = self.player_count
+        for number in valid_numbers:
+            for seat in valid_seats:
+                player.seat = seat
+                player.number = number
 
-        new_seat: Seat = cast(Seat,
-                              random.randint(0, old_player_count))
+                for other in self.players:
+                    if other.seat >= seat:
+                        other.seat += 1
+                    if other.number >= number:
+                        other.number += 1
 
-        new_number: PrivateNumber = cast(PrivateNumber,
-                                         random.randint(0, old_player_count))
+                self.players.append(player)
 
-        # Increment all higher or equal numbers by 1
-        self._seat_numbers = [cast(PrivateNumber, x+1)
-                              if x >= new_number else x
-                              for x in self._seat_numbers]
+                self.current_x = self._init_x()
+                self.__cached_streak_result = None
 
-        # add seat
-        self._seat_numbers.insert(new_seat, new_number)
+                if self.longest_streak == 2 or len(self.players) < 4:
+                    return
 
-        # TODO: Hrmmmmmmm
-        self.current_x = self.init_x()
+                self.remove_player(player)
 
-        return new_seat
+        raise SeatException('Unable to add player. Weird?')
 
-    def remove_seat(self, seat: Seat) -> None:
-        self.__cached_game_over = None
-        removed_number = self._seat_numbers.pop(seat)
+    def remove_player(self, player: GenP) -> None:
+        self.__cached_streak_result = None
+        self.players.remove(player)
 
-        # decrement all latter numbers by 1
-        self._seat_numbers = [cast(PrivateNumber, x-1)
-                              if x > removed_number else x
-                              for x in self._seat_numbers]
+        for other in self.players:
+            if other.seat >= player.seat:
+                other.seat -= 1
+            if other.number >= player.number:
+                other.number -= 1
 
         for i in range(len(self.current_x)):
-            if self.current_x[i] > removed_number:
-                self.current_x[i] = cast(PrivateNumber,
-                                         self.current_x[i] + 1)
+            if self.current_x[i] > player.number:
+                self.current_x[i] -= 1
 
     def is_x(self, number: int) -> bool:
         return number in self.current_x
 
-    def seat_is_x(self, seat: Seat) -> bool:
-        return self.is_x(self._seat_numbers[seat])
-
     @property
     def game_over(self) -> bool:
-        if self.__cached_game_over is not None:
-            return self.__cached_game_over
-
         if self.player_count < 4:
-            self.__cached_game_over = True
-        else:
-            res = self.longest_streak()
+            return True
 
-            streak_length = self.win_streak_length
+        res = self.longest_streak
 
-            if (self.player_count == streak_length
-                    and res.longest_streak == streak_length):
-                self.__cached_game_over = True
-            else:
+        streak_length = self.win_streak_length
 
-                self.__cached_game_over = (res.longest_streak == streak_length
-                                           and res.instances == 1)
-        return self.__cached_game_over
+        if (self.player_count == streak_length
+                and res.longest_streak == streak_length):
+            return True
+
+        return res.longest_streak == streak_length and res.instances == 1
 
     def _adjacent_numbers(self, first: PrivateNumber,
                           second: PrivateNumber,
@@ -241,10 +253,31 @@ class SeatGame:
                 return False
         return False
 
+    @property
     def longest_streak(self) -> StreakResult:
+        if self.__cached_streak_result is None:
+            self.__cached_streak_result = self._longest_streak()
+
+        return self.__cached_streak_result
+
+    def _longest_streak(self) -> StreakResult:
         # Go over all the seats in two different directions,
         # reversing the second for loop.
+
+        # Wait a second this shit is dumb
+        # 1. Don't need to reverse the list, just check both directions from
+        # each seat.
+        # Oh nevermind, that's because I wanted it sorted in some way.
+
+        # 2. Even better is to start at a seat that is not neighbor with it's
+        # previous seat, go forward conting the streak length, when finished
+        # counting streak length, *continue from there* for next check.
+        # This one does a bunch of extra checks (although not that many)
         player_count = self.player_count
+        seat_numbers: List[PrivateNumber] = [PrivateNumber(0)] * player_count
+
+        for other in self.players:
+            seat_numbers[other.seat] = other.number
 
         longest_streak = 0
         instances = 0
@@ -254,15 +287,15 @@ class SeatGame:
                                   (player_count-1, -1, -1)):
 
             for i in range(start, end, delta):
-                if self.is_x(self._seat_numbers[i]):
+                if self.is_x(seat_numbers[i]):
                     continue
                 streak = 1
 
                 while (streak < player_count
                        and self._adjacent_numbers(
-                           self._seat_numbers[
+                           seat_numbers[
                                (i+delta*(streak-1)) % player_count],
-                           self._seat_numbers[
+                           seat_numbers[
                                (i+delta*(streak)) % player_count],
                            1)):
                     streak += 1
@@ -276,108 +309,20 @@ class SeatGame:
                     instances += 1
 
         return StreakResult(longest_streak, instances,
-                            cast(Seat, starting_seat), direction)
+                            Seat(starting_seat), direction)
 
     @property
-    def winners(self) -> List[int]:
-        res = self.longest_streak()
+    def winners(self) -> List[GenP]:
+        res = self.longest_streak
 
         return [
-            (res.starting_seat + i*res.direction) % self.player_count
-            for i in range(res.longest_streak)
+            self.player_in_seat(
+                (res.starting_seat + i*res.direction) % self.player_count)
+            for i in Seat.range(res.longest_streak)
         ]
 
-    def shuffle(self) -> None:
-        """algorithm always works on n > 8. Never works on n < 6.
-        n=6 - 9.5% fail rate. n=7 1.8%, n=8 0.3%.
-        We *could* just retry until we succeed, but instead I wrote an
-        entirely new function to build the seating."""
-        def consecutive(first: Seat, second: Seat) -> bool:
-            first_number = self._seat_numbers[first % self.player_count]
-            second_number = self._seat_numbers[second % self.player_count]
-
-            return (self._adjacent_numbers(first_number, second_number, 1)
-                    or self._adjacent_numbers(first_number, second_number, -1))
-
-        self.__cached_game_over = None
-        count = self.player_count
-
-        if count < 6:
-            random.shuffle(self._seat_numbers)
-            return
-
-        if count < 9:
-            self._seat_numbers = self._build_valid_numbers()
-            return
-
-        random.shuffle(self._seat_numbers)
-
-        for i in cast(Iterable[Seat], range(self.player_count)):
-            if consecutive(i, i+1):
-                # offset = random.randint(0, count-1)
-                offset = 0
-
-                for j in cast(Iterable[Seat], range(offset, count+offset)):
-                    # don't swap with ourselves,
-                    # or the one we're consecutive with,
-                    # or the one after that.
-                    if (j - i) % count < 2:
-                        continue
-
-                    swappable = True
-                    deltas = ((0, +1), (0, -1), (-1, 0), (+1, 0))
-
-                    for i_delta, j_delta in deltas:
-                        if consecutive(i+i_delta, j+j_delta):
-                            swappable = False
-                            break
-
-                    if swappable:
-                        self.swap_seats(i, j % count)
-                        break
-
-    def _build_valid_numbers(self) -> List[PrivateNumber]:
-        """Generate a list with non-adjacent numbers up to count-1.
-        Then offset all numbers depending on X,
-        and insert X at random index.
-        Good for 6 to 8."""
-        count = self.player_count - 1
-
-        def _rec(result: List[PrivateNumber]) -> List[PrivateNumber]:
-            # if we only have one number left to insert, check that it
-            # doesn't collide with first or last element.
-            if len(result) == count-1:
-                number = cast(PrivateNumber,
-                              (set(range(count)) - set(result)).pop())
-                if (abs(number - result[-1]) not in (1, count-1)
-                        and abs(number - result[0]) not in (1, count-1)):
-                    return result + [number]
-
-                return []
-
-            # branch with each number not already in the list,
-            # and doesn't collide with last element
-            numbers: List[PrivateNumber] = list(cast(Iterable[PrivateNumber],
-                                                     range(count)))
-            random.shuffle(numbers)
-            for i in numbers:
-                if i not in result and abs(i - result[-1]) not in (1, count-1):
-                    ret = _rec(result + [i])
-                    if ret:
-                        return ret
-            return []
-
-        res: List[PrivateNumber] = []
-        res.append(cast(PrivateNumber, random.randint(0, count-2)))
-
-        res = _rec(res)
-
-        # on these counts there should be one x
-        current_x = self.current_x[0]
-
-        for i in range(count):
-            if res[i] >= current_x:
-                res[i] = cast(PrivateNumber, res[i] + 1)
-
-        res.insert(random.randint(0, count), current_x)
+    @property
+    def table_layout(self) -> List[GenP]:
+        res = self.players.copy()
+        res.sort(key=lambda x: x.seat, reverse=True)
         return res

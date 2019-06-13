@@ -7,14 +7,15 @@ import math
 
 from enum import Enum, auto
 import typing
-from typing import Dict, List, Optional, Any, cast
+from typing import Dict, Optional, Any, cast
 
 
 import discord  # type: ignore
 
-from player_game import Player, Proposal, PlayerGame
-
-from seat_typing import Seat, SeatException, SeatChannel
+import strings
+from seat_game import SeatPlayer, SeatGame
+from seat_typing import (Seat, PrivateNumber, SeatException, SeatChannel,
+                         Findable, GenF)
 
 DEFAULT_ROUND_LENGTH = 300
 DEFAULT_PUBLIC_SWAPS = False
@@ -47,31 +48,77 @@ class GameState(Enum):
         return state_strs[self]
 
 
-class DiscordPlayer(Player):
+class CommonPlayer(SeatPlayer, Findable):
+    def __init__(self,
+                 garnets: int = 0):
+        super().__init__()
+        self.garnets = garnets
+        self.public_seat: Seat = Seat(-1)
+
+        self.proposals: ListProposals = []
+        self.botswaps: typing.List[BotSwap] = []
+
+    @property
+    def incoming_proposals(self) -> ListProposals:
+        return [p for p in self.proposals
+                if p.target == self]
+
+    @property
+    def outgoing_proposals(self) -> ListProposals:
+        return [p for p in self.proposals
+                if p.source == self]
+
+    async def send(self, *args: Any, **kwargs: str) -> None:
+        raise NotImplementedError('Pure virtual method')
+
+    async def received_garnets(self, donater: CommonPlayer,
+                               amount: int) -> None:
+        pass
+
+    def new_round(self) -> None:
+        super().new_round()
+        for proposal in self.proposals:
+            proposal.cancel()
+        self.proposals.clear()
+
+        for botswap in self.botswaps:
+            botswap.cancel()
+        self.botswaps.clear()
+
+        self.public_seat = self.seat
+
+    def matches(self, search_key: str) -> bool:
+        raise NotImplementedError('Virtual method matches.')
+
+    @classmethod
+    def find(cls: typing.Type[GenF], search_key: str, **kwargs: Any) -> GenF:
+        assert 'game' in kwargs
+        game: DiscordGame = kwargs['game']  # DiscordGame?
+
+        for player in game.players:
+            if player.matches(search_key):
+                if isinstance(player, cls):
+                    return player
+                raise DiscordGameException(
+                    'Error: Found {} which is a {} and not a {}.'.format(
+                        player, type(player).__name__, cls.__name__))
+        raise DiscordGameException(
+            'Error: Found no {} matching `{}`.'.format(
+                cls.__name__, search_key))
+
+
+class DiscordPlayer(CommonPlayer):
     def __init__(self,
                  discord_user: discord.User,
-                 player_game: PlayerGame,
-                 seat: Seat = cast(Seat, -1),
                  garnets: int = 0) -> None:
-        super().__init__(player_game, seat, garnets)
+        super().__init__(garnets)
         self.user = discord_user
         self._channel: Optional[SeatChannel] = None
         self.ready = False
-        self._assigned_numbers: Dict[Player, int] = {}
+        self._assigned_numbers: Dict[SeatPlayer, PrivateNumber] = {}
 
     def __str__(self) -> str:
         return cast(str, self.user.display_name)
-
-    @classmethod
-    def find(cls, search_key: str, **kwargs: Any) -> DiscordPlayer:
-        return cast(DiscordPlayer,
-                    super(DiscordPlayer, cls).find(search_key, **kwargs))
-
-    @property
-    def assigned_numbers(self) -> Dict[Player, int]:
-        if self not in self._assigned_numbers:
-            self._assigned_numbers[self] = self.number
-        return self._assigned_numbers
 
     def matches(self, search_key: str) -> bool:
         if search_key.lower() in (self.user.name.lower(),
@@ -79,7 +126,7 @@ class DiscordPlayer(Player):
             return True
         if search_key.isdigit():
             if (int(search_key) == self.user.id
-                    or int(search_key) == self._seat):
+                    or int(search_key) == self.seat):
                 return True
         return False
 
@@ -88,23 +135,75 @@ class DiscordPlayer(Player):
             self._channel = await SeatChannel.from_user(self.user)
         return await self._channel.send(*args, **kwargs)
 
+    @property
+    def assigned_numbers(self) -> Dict[SeatPlayer, PrivateNumber]:
+        if self not in self._assigned_numbers:
+            self._assigned_numbers[self] = self.number
+        return self._assigned_numbers
 
-class BotPlayer(Player):
+    def add_proposal_to(self,
+                        target: CommonPlayer,
+                        garnets: int = 0) -> Proposal[CommonPlayer]:
+        for prop in self.outgoing_proposals:
+            if prop.target == target:
+                raise DiscordGameException(
+                    'You already have a proposal to {}'.format(target))
+
+        proposal = Proposal(self, target, garnets)
+
+        self.proposals.append(proposal)
+        target.proposals.append(proposal)
+
+        return proposal
+
+    def add_botswap(self, botswap: BotSwap) -> None:
+        for party in self, botswap.source, botswap.target:
+            party.botswaps.append(botswap)
+
+    # TODO: Move to Proposal, so there is only one visible entry point
+    # having both Player.accept_proposal and proposal.accept it's not
+    # intuitive which one should be called from the outside.
+
+    def accept_proposal(self, proposal: Proposal[CommonPlayer]) -> None:
+        proposal.accept()
+        for party in self, proposal.source:
+            party.proposals.remove(proposal)
+
+    def cancel_proposal(self, proposal: Proposal[CommonPlayer]) -> None:
+        proposal.cancel()
+        self.proposals.remove(proposal)
+        if proposal.source == self:
+            proposal.target.proposals.remove(proposal)
+        else:
+            proposal.source.proposals.remove(proposal)
+
+    def cancel_botswap(self, botswap: BotSwap) -> None:
+        botswap.cancel()
+        for party in self, botswap.source, botswap.target:
+            party.botswaps.remove(botswap)
+
+    async def donate_garnets(self, target: CommonPlayer, amount: int) -> None:
+        if amount > self.garnets:
+            raise DiscordGameException(
+                'Error: cannot donate more garnets than you have.')
+        if amount <= 0:
+            raise DiscordGameException(
+                'Error: invalid garnet amount')
+        self.garnets -= amount
+        target.garnets += amount
+
+        await target.received_garnets(self, amount)
+
+
+class BotPlayer(CommonPlayer):
     def __init__(self,
                  name: str,
-                 player_game: PlayerGame,
-                 seat: Seat = cast(Seat, -1),
                  garnets: int = 0) -> None:
-        super().__init__(player_game, seat, garnets)
+        super().__init__(garnets)
         self.name = name
 
     def __str__(self) -> str:
         return self.name.title()
-
-    @classmethod
-    def find(cls, search_key: str, **kwargs: Any) -> BotPlayer:
-        return cast(BotPlayer,
-                    super(BotPlayer, cls).find(search_key, **kwargs))
 
     def matches(self, search_key: str) -> bool:
         return search_key.lower() == self.name.lower()
@@ -114,7 +213,8 @@ class BotPlayer(Player):
         # error if somebody tries to.
         return None
 
-    async def received_garnets(self, donater: Player, amount: int) -> None:
+    async def received_garnets(self, donater: CommonPlayer,
+                               amount: int) -> None:
         if amount > 0:
             await donater.send(
                 '{} thanks you for the kind donation, '
@@ -122,7 +222,81 @@ class BotPlayer(Player):
                     self.name, self.number))
 
 
-class BotSwap(Proposal):
+CP = typing.TypeVar('CP', bound=CommonPlayer)
+ListProposals = typing.List['Proposal[CommonPlayer]']
+
+
+class Proposal(Findable, typing.Generic[CP]):
+    def __init__(self,
+                 source: CP,
+                 target: CP,
+                 garnets: int = 0):
+        self.source = source
+        self.target = target
+        self.garnets = garnets
+
+        self._lock_up_garnets()
+
+    @classmethod
+    def find(cls: typing.Type[GenF], search_key: str, **kwargs: Any) -> GenF:
+        assert 'player' in kwargs
+        player: DiscordPlayer = kwargs['player']
+
+        for proposal in player.proposals:
+            if (proposal.source.matches(search_key)
+                    or proposal.target.matches(search_key)):
+                if not isinstance(proposal, cls):
+                    raise DiscordGameException(
+                        'Expected type {}, found {}'.format(
+                            cls, type(proposal)))
+                return proposal
+        raise DiscordGameException(
+            'Error: Found no {} with a player matching `{}`.'.format(
+                cls.__name__.lower(), search_key))
+
+    def __contains__(self, player: CP) -> bool:
+        return player in (self.source, self.target)
+
+    def _lock_up_garnets(self) -> None:
+        # lock up garnets until canceled
+        if self.garnets < 0:
+            raise DiscordGameException(
+                'Garnet amount must be non-negative')
+        if self.source.garnets < self.garnets:
+            raise DiscordGameException(
+                "Can't create proposal, insufficient garnets")
+        self.source.garnets -= self.garnets
+
+    def _release_garnets(self) -> None:
+        self.source.garnets += self.garnets
+
+    def _award_garnets(self) -> None:
+        self.target.garnets += self.garnets
+
+    def __str__(self) -> str:
+        return 'Proposal from {} to {} offering {} garnets.'.format(
+            self.source,
+            self.target,
+            self.garnets)
+
+    def accept(self) -> None:
+        if self.target.swapped:
+            raise DiscordGameException(
+                'You have already swapped.')
+
+        if self.source.swapped:
+            raise DiscordGameException(
+                'target {} already swapped'.format(self.source))
+
+        self.target.swap(self.source)
+
+        self._award_garnets()
+
+    def cancel(self) -> None:
+        self._release_garnets()
+
+
+class BotSwap(Proposal[BotPlayer]):
     """A proposal between two bots, sponsored by a player.
 
     We pass 0 garnets into Proposal to avoid lockup (better solution?).
@@ -136,13 +310,18 @@ class BotSwap(Proposal):
         self.guarantor = guarantor
         super().__init__(source, target, garnets)
 
+    def __repr__(self) -> str:
+        return ('BotSwap(source={}, target={}, guarantor={}, garnets={})'
+                ''.format(self.source, self.target,
+                          self.guarantor, self.garnets))
+
     def __str__(self) -> str:
         return ('Botswap between {} and {} '
                 'guaranteed by {} with {} garnets.'.format(
                     self.source, self.target,
                     self.guarantor, self.garnets))
 
-    def __keys(self) -> typing.Tuple[Player, Player, DiscordPlayer, int]:
+    def __keys(self) -> typing.Tuple[BotPlayer, BotPlayer, DiscordPlayer, int]:
         return (self.source, self.target, self.guarantor, self.garnets)
 
     def __eq__(self, other: typing.Any) -> bool:
@@ -215,7 +394,9 @@ class NewRoundEarly(ReactFunction):  # pylint: disable=too-few-public-methods
         await self.game.force_new_round()
 
 
-class DiscordGame(PlayerGame):
+class DiscordGame(SeatGame[CommonPlayer]):
+    default_options: typing.Dict[str, Any] = strings.DEFAULT_OPTIONS
+
     def __init__(self,
                  channel: SeatChannel,
                  options: Optional[Dict[str, Any]] = None) -> None:
@@ -224,15 +405,19 @@ class DiscordGame(PlayerGame):
             self.options['round_length'] = DEFAULT_ROUND_LENGTH
         if 'public_swaps' not in self.options:
             self.options['public_swaps'] = DEFAULT_PUBLIC_SWAPS
+        for key in self.default_options:
+            if key not in self.options:
+                self.options[key] = self.default_options[key]
+
         super().__init__(self.options)
 
         self.channel: SeatChannel = channel
+        self.state: GameState = GameState.CREATED
+        self.reactable_messages: Dict[discord.Message, ReactFunction] = {}
+
+        # TODO: Remove, but requires some refactoring
         self.discord_players: Dict[discord.User, DiscordPlayer] = {}
         self.bots: Dict[str, BotPlayer] = {}
-        self.botswaps: typing.Set[BotSwap] = set()
-        self.state: GameState = GameState.CREATED
-
-        self.reactable_messages: Dict[discord.Message, ReactFunction] = {}
 
     async def send(self,
                    *args: Any,
@@ -283,18 +468,6 @@ class DiscordGame(PlayerGame):
         if self.state == GameState.STARTING:
             self.state = GameState.CREATED
 
-    # This is *obviously* best solved with a Generator
-    # @property
-    # def players(self) -> Generator[Player, None, None]:
-    #     for player in self.discord_players.values():
-    #         yield player
-    #     for bot in self.bots.values():
-    #         yield bot
-
-    @property
-    def player_count(self) -> int:
-        return len(self.discord_players) + len(self.bots)
-
     # Tihi, don't feel like this is correct usage of this operator, but I
     # couldn't refrain.
     def __contains__(self,
@@ -311,7 +484,8 @@ class DiscordGame(PlayerGame):
             raise DiscordGameException(
                 'Error: Invalid game state: {}'.format(self.state))
 
-        self.start_game()
+        for player in self.players:
+            player.new_round()
 
         await self._message_start_game()
         self.state = GameState.RUNNING
@@ -342,16 +516,18 @@ class DiscordGame(PlayerGame):
         await self._message_react_earlynewround()
 
     async def _resolve_botswaps_proposals(self) -> None:
-        def garnet_key(proposal: Proposal) -> int:
+        def garnet_key(proposal: Proposal[CP]) -> int:
             return proposal.garnets
 
-        bot_proposals: List[Proposal] = []
+        bot_proposals: ListProposals = []
+        botswap_set: typing.Set[BotSwap] = set()
 
         for bot in self.bots.values():
             bot_proposals += [x for x in bot.incoming_proposals
                               if not x.source.swapped]
+            botswap_set.update(bot.botswaps)
 
-        botswaps = list(self.botswaps)
+        botswaps = list(botswap_set)
         random.shuffle(botswaps)
         botswaps.sort(key=garnet_key, reverse=True)
 
@@ -364,7 +540,8 @@ class DiscordGame(PlayerGame):
             source_proposals.sort(key=garnet_key)
             target_proposals.sort(key=garnet_key)
 
-            def list_get(proposals: typing.List[Proposal], index: int) -> int:
+            def list_get(proposals: typing.List[Proposal[CommonPlayer]],
+                         index: int) -> int:
                 if index < len(proposals):
                     return proposals[index].garnets
                 return 0
@@ -386,41 +563,61 @@ class DiscordGame(PlayerGame):
                     botswap.accept()
                 except SeatException:
                     pass
-                await botswap.guarantor.send(
-                    'Your botswap between {} and {} was accepted.'.format(
-                        botswap.source, botswap.target))
+                else:
+                    await botswap.guarantor.send(
+                        'Your botswap between {} and {} was accepted.'.format(
+                            botswap.source, botswap.target))
                 bot_proposals = [x for x in bot_proposals
-                                 if x.target not in botswap]
+                                 if cast(BotPlayer, x.target) not in botswap]
 
         random.shuffle(bot_proposals)
         bot_proposals.sort(key=garnet_key, reverse=True)
         for proposal in bot_proposals:
             try:
                 proposal.accept()
+            except SeatException:
+                pass
+            else:
                 await proposal.source.send(
                     '{proposal.target} accepted your proposal, '
                     'gaining {proposal.garnets}.\n'
                     'Your new seat is {proposal.source.seat}.\n'
                     "{proposal.target}'s new seat is {proposal.target.seat}"
                     ''.format(proposal=proposal))
-            except SeatException:
-                pass
-        self.botswaps = set()
 
     async def new_discord_round(self) -> None:
         await self._resolve_botswaps_proposals()
 
-        if not self.new_round():
+        if self.game_over:
             self.state = GameState.GAME_OVER
+            self._award_win_garnets()
             await self._message_game_over()
             return
+
+        for player in self.players:
+            player.new_round()
+        self.new_round()
 
         await self._message_new_round()
         await self._message_react_earlynewround()
 
+    def _award_win_garnets(self) -> None:
+        for player in self.winners:
+            player.garnets += self.options['win_garnets']
+        for player in self.current_x_players:
+            player.garnets += self.options['x_garnets']
+
+        streak_length = self.win_streak_length
+        middle_garnets = self.options['middle_garnets']
+        if streak_length % 2 == 0:
+            self.winners[streak_length//2].garnets += middle_garnets//2
+            self.winners[streak_length//2-1].garnets += middle_garnets//2
+        else:
+            self.winners[(streak_length-1)//2].garnets += middle_garnets
+
     async def _message_react_earlynewround(self) -> None:
         react_needed = max(2, math.ceil(len(self.discord_players)/2)+1)
-        emoji = '✅'  # :white_check_mark
+        emoji = '✅'  # :white_check_mark:
         message = await self.channel.wait_send(
             'React {} to this message to vote for starting the next round '
             'early. {} reactions needed, only players may vote.'.format(
@@ -445,7 +642,8 @@ class DiscordGame(PlayerGame):
         if self.state == GameState.STARTING:
             self.state = GameState.CREATED
 
-        player = DiscordPlayer(user, self)
+        player = DiscordPlayer(user,
+                               garnets=self.options['start_garnets'])
         self.discord_players[user] = player
         self.add_player(player)
         await self.send('{} joined the game'.format(player))
@@ -459,7 +657,7 @@ class DiscordGame(PlayerGame):
             await self.start_game_countdown()
 
     async def add_bot(self, name: str) -> None:
-        bot = BotPlayer(name, self)
+        bot = BotPlayer(name)
         self.bots[name] = bot
         self.add_player(bot)
         await self.send('Bot player {} added to the game'.format(bot))
@@ -526,27 +724,17 @@ class DiscordGame(PlayerGame):
                     message_current_x=message_current_x
                 ))
 
-        # TODO: pylint gives missing-format-attribute if i try to acces
-        # the attributes of self.game inside the format string.
-        # why??
-        if self.options['reveal_longest_streak']:
-            message_longest_streak = (
-                'With the new X the longest streak is {streak}.\n'.format(
-                    streak=self.longest_streak))
-        else:
-            message_longest_streak = ''
-
         await self.channel.wait_send(
             '**Round {current_round} started.**\n'
             '```\nSeat  Player\n'
             '{table_layout}```\n'
             "The game didn't finish last round with the old X value.\n"
-            '{message_longest_streak}'
+            'With the new X the longest streak is {streak}.\n'
             'Streak required to win is {win_streak_length}.\n'
             '{message_current_x}' .format(
                 current_round=self.current_round,
                 table_layout=self._get_table_layout_string(),
-                message_longest_streak=message_longest_streak,
+                streak=self.longest_streak.longest_streak,
                 win_streak_length=self.win_streak_length,
                 message_current_x=message_current_x
             ))
@@ -587,99 +775,34 @@ class DiscordGame(PlayerGame):
                 player_garnets=self._get_garnets_string()
             ))
 
-#    async def _command_botswap(self, parameters: List[str],
-#                               player: DiscordPlayer):
-#        if not self.running:
-#            raise DiscordGameException(
-#                'Error: game is not running')
-#
-#        if not parameters or 'with' not in parameters:
-#            raise DiscordGameException(
-#                'Error: please specify bots and number in '
-#                'the following format.\n'
-#                '`!assign <bot> with <bot> <garnets>`\n'
-#                'Example: `!botswap Seat Exchange Bot with '
-#                'necro_score_bot 5`.')
-#
-#        if not parameters[-1].isdigit():
-#            raise DiscordGameException(
-#                'Error: invalid garnet amount {}'.format(parameters[-1])
-#            )
-#
-#        garnets = int(parameters[-1])
-#
-#        with_index = parameters.index('with')
-#
-#        source = self.find_player(' '.join(parameters[:with_index]))
-#
-#        target = self.find_player(' '.join(parameters[with_index+1:-1]))
-#
-#        if not source.user.bot:
-#            raise DiscordGameException(
-#                'Error: {} is not a bot.'.format(source))
-#
-#        if not target.user.bot:
-#            raise DiscordGameException(
-#                'Error: {} is not a bot.'.format(target))
-#
-#        player.botswaps.append(Proposal(source, target, self, garnets))
-#
-#        if source == target:
-#            await player.send('Bribed {} to not swap with {} garnets.'.format(
-#                source, garnets))
-#
-#        else:
-#            await player.send('Proposed botswap with {} and {} '
-#                              'with a total bribe of {} garnets.'.format(
-#                                  source, target, garnets))
-#
-#    async def _command_cancelall_botswaps(self,
-#                                          _parameters: List[str],
-#                                          player: DiscordPlayer):
-#        if not self.running:
-#            raise DiscordGameException(
-#                'Error: game is not running')
-#
-#        if not player.botswaps:
-#            raise DiscordGameException(
-#                'Error: you have no active botswaps proposed.')
-#
-#        player.botswaps = []
-
-    # tries to match search key by id, name, display_name or seat
-    def find_player(self, search_key: str) -> Player:
-        for player in self.players:
-            if player.matches(search_key):
-                return player
-
-        raise DiscordGameException(
-            'Error: cannot find any matches for {}'.format(search_key))
-
     def _get_table_layout_string(self) -> str:
+        players = self.players.copy()
+        players.sort(key=lambda x: x.public_seat)
         # I'm sorry
+        print(type(self.players[0].seat))
         return ''.join([
-            '{0:>3}   {1}\n'.format(
-                player.seat,
+            '{0}     {1}\n'.format(
+                player.public_seat,
                 player)
-            for player in self.players])
+            for player in players])
 
     def _get_winner_string(self) -> str:
         return '\n'.join([
-            '{0.seat:>3} {0.number:>5}   {0}'.format(winner)
+            '  {0.seat} {0.number:>5}   {0}'.format(winner)
             for winner in self.winners
         ])
 
     def _get_garnets_string(self) -> str:
-        players = list(self.players)
-        players.sort(key=lambda x: -x.garnets)
+        players = self.players.copy()
+        players.sort(reverse=True, key=lambda x: x.garnets)
         return '\n'.join([
             '{0.garnets:>5}   {0}'.format(player)
             for player in players
         ])
 
 
-async def message_cancel(canceler: Player,
-                         receiver: Player) -> None:
+async def message_cancel(canceler: CommonPlayer,
+                         receiver: CommonPlayer) -> None:
     await canceler.send(
         'Proposal to {} canceled. Any locked up garnets are returned.'
         ''.format(receiver))

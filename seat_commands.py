@@ -6,15 +6,16 @@ import itertools
 import asyncio
 from enum import Enum, auto
 import typing
-from typing import Optional, List, Any, Sequence, cast
+from typing import Optional, List, Any, Sequence
 from dataclasses import dataclass
 
 import discord  # type: ignore
 
 import seat_typing
 import discord_game
-from discord_game import DiscordPlayer, DiscordGame, GameState, BotPlayer
-from player_game import Findable, Player, Proposal
+from discord_game import (DiscordGame, GameState,
+                          DiscordPlayer, BotPlayer, CommonPlayer)
+# from player_game import Findable, Player, Proposal
 
 import strings
 
@@ -56,11 +57,11 @@ class ArgType:
         if arg == '' and self.optional:
             return self.defaultvalue
 
-        if issubclass(self.arg_type, Findable):
+        if issubclass(self.arg_type, seat_typing.Findable):
             return self.arg_type.find(arg, **kwargs)
 
         # Gives "Too many arguments for "object" without cast
-        return cast(type, self.arg_type)(arg)
+        return typing.cast(type, self.arg_type)(arg)
 
 
 class CommandMessage:
@@ -381,7 +382,7 @@ class ProposeSeatSwap(CommandType):
             player_only=True,
             private_only=True,
             valid_game_states=[GameState.RUNNING])
-        args = (ArgType(Player),
+        args = (ArgType(CommonPlayer),
                 ArgType(int, optional=True, defaultvalue=0))
         super().__init__('propose',
                          games=games,
@@ -393,7 +394,7 @@ class ProposeSeatSwap(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game
         assert command.player
-        target: Player
+        target: CommonPlayer
         garnets: int
 
         target, garnets = command.convert_arguments(
@@ -431,7 +432,7 @@ class AcceptSeatSwap(CommandType):
             player_only=True,
             private_only=True,
             valid_game_states=(GameState.RUNNING,))
-        args = (ArgType(Proposal, optional=True),)  # TODO
+        args = (ArgType(discord_game.Proposal, optional=True),)  # TODO
         super().__init__('accept', 'acceptproposal', 'acceptincoming',
                          games=games,
                          requirements=requirements,
@@ -443,8 +444,8 @@ class AcceptSeatSwap(CommandType):
         assert command.game
         assert command.player
 
-        proposal: Proposal = command.convert_arguments(
-            self.args, player=command.player)[0]
+        proposal: discord_game.Proposal[discord_game.CommonPlayer] = (
+            command.convert_arguments(self.args, player=command.player)[0])
         proposals = command.player.proposals
 
         if not proposals:
@@ -472,12 +473,12 @@ class AcceptSeatSwap(CommandType):
                 'swapped.'
                 'Proposal canceled.'.format(
                     command.player))
-            command.game.cancel_proposal(proposal)
+            command.player.cancel_proposal(proposal)
             raise CommandException(
                 self, '{} has already swapped this round. Proposal canceled.'
                 ''.format(source))
 
-        command.game.accept_proposal(proposal)
+        command.player.accept_proposal(proposal)
 
         await command.player.send(
             'Accepted proposal from {source}, gaining {garnets} garnets.\n'
@@ -506,7 +507,7 @@ class CancelSeatSwap(CommandType):
             player_only=True,
             private_only=True,
             valid_game_states=(GameState.RUNNING,))
-        args = (ArgType(Proposal, optional=True),)
+        args = (ArgType(discord_game.Proposal, optional=True),)
         super().__init__('cancel', 'reject',
                          'cancelproposal', 'rejectproposal',
                          games=games,
@@ -519,8 +520,8 @@ class CancelSeatSwap(CommandType):
         assert command.game
         assert command.player
 
-        proposal: Proposal = command.convert_arguments(
-            self.args, player=command.player)[0]
+        proposal: discord_game.Proposal[discord_game.CommonPlayer] = (
+            command.convert_arguments(self.args, player=command.player)[0])
 
         proposals = command.player.proposals
 
@@ -540,7 +541,7 @@ class CancelSeatSwap(CommandType):
         else:
             other = proposal.source
 
-        command.game.cancel_proposal(proposal)
+        command.player.cancel_proposal(proposal)
         await command.player.send(
             'Canceled proposal with {}.'.format(other))
         await other.send(
@@ -584,8 +585,8 @@ class CreateBotSwap(CommandType):
             command.convert_arguments(self.args, game=command.game))
 
         botswaps = [
-            x for x in command.game.botswaps
-            if source in x and target in x and x.guarantor == command.player]
+            x for x in command.player.botswaps
+            if source in x and target in x]
 
         if botswaps:
             raise CommandException(
@@ -595,7 +596,7 @@ class CreateBotSwap(CommandType):
         botswap = discord_game.BotSwap(
             source, target, command.player, garnets)
 
-        command.game.botswaps.add(botswap)
+        command.player.add_botswap(botswap)
 
         await command.player.send(
             'Created: {}'.format(botswap))
@@ -627,15 +628,14 @@ class CancelBotSwap(CommandType):
                                                    game=command.game)
 
         try:
-            botswap = next(x for x in command.game.botswaps
-                           if (source in x and target in x
-                               and x.guarantor == command.player))
+            botswap = next(x for x in command.player.botswaps
+                           if (source in x and target in x))
         except StopIteration:
             raise CommandException(
                 self, 'Found no botswaps between {} and {} sponsored by you.'
                 ''.format(source, target))
 
-        command.game.botswaps.remove(botswap)
+        command.player.cancel_botswap(botswap)
 
         await command.player.send(
             'Canceled: {}'.format(botswap))
@@ -649,7 +649,7 @@ class DonateGarnets(CommandType):
             player_only=True,
             private_only=True,
             valid_game_states=[GameState.RUNNING])
-        args = (ArgType(Player),
+        args = (ArgType(CommonPlayer),
                 ArgType(int))
         super().__init__('donate', 'donategarnets',
                          games=games,
@@ -661,7 +661,7 @@ class DonateGarnets(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.player
 
-        target: Player
+        target: CommonPlayer
         garnets: int
         target, garnets = command.convert_arguments(self.args,
                                                     game=command.game)
@@ -730,15 +730,12 @@ class PrintBotSwaps(CommandType):
         assert command.game
         assert command.player
 
-        botswaps = (x for x in command.game.botswaps
-                    if x.guarantor == command.player)
-
-        if not botswaps:
+        if not command.player.botswaps:
             await command.player.send("Found no botswaps sponsored by you.")
             return
 
         await command.player.send(
-            *botswaps, start='```\n', end='```', sep='\n')
+            command.player.botswaps, start='```\n', end='```', sep='\n')
 
 
 class PrintPlayers(CommandType):
@@ -784,7 +781,11 @@ class PrintSeating(CommandType):
     def __init__(self, games: GameDict) -> None:
         requirements = Requirements(
             game_only=True,
-            player_only=True)
+            player_only=True,
+            valid_game_states=[GameState.RUNNING,
+                              GameState.PAUSED,
+                              GameState.GAME_OVER,
+                              GameState.STOPPED])
         help_text = ('Print seat and assigned numbers for all players.')
         super().__init__('seating', 'printseating',
                          games=games,
@@ -800,7 +801,7 @@ class PrintSeating(CommandType):
 
         await command.player.send(
             '\n'.join(
-                '{0:>3} {1:>4} {2}'.format(
+                '{0} {1:>2} {2}'.format(
                     player.seat,
                     assigned_numbers.get(player, ''),
                     player)
@@ -816,7 +817,7 @@ class AssignNumber(CommandType):
             player_only=True)
         help_text = ('Assign a deduced number to a player. '
                      'For use with `!seating`')
-        args = (ArgType(Player),
+        args = (ArgType(CommonPlayer),
                 ArgType(int))
         super().__init__('assign', 'assignnumber',
                          games=games,
@@ -829,8 +830,8 @@ class AssignNumber(CommandType):
         assert command.game
         assert command.player
 
-        target: Player
-        number: int
+        target: CommonPlayer
+        number: seat_typing.PrivateNumber
         target, number = command.convert_arguments(self.args,
                                                    game=command.game)
 
@@ -847,7 +848,7 @@ class UnassignNumber(CommandType):
             player_only=True)
         help_text = ('Remove the assigned number from a player. '
                      'For use with `!seating`')
-        args = (ArgType(Player),)
+        args = (ArgType(CommonPlayer),)
         super().__init__('unassign', 'unassignnumber',
                          games=games,
                          requirements=requirements,
@@ -859,7 +860,7 @@ class UnassignNumber(CommandType):
         assert command.game
         assert command.player
 
-        target: Player = command.convert_arguments(
+        target: CommonPlayer = command.convert_arguments(
             self.args, game=command.game)[0]
         number = command.player.assigned_numbers.pop(target)
 
@@ -1367,7 +1368,7 @@ class Reveal(CommandType):
                      'for {} seconds.'.format(REVEAL_TIME))
         requirements = Requirements(
             real_life_game_only=True)
-        args = (ArgType(Player),)
+        args = (ArgType(CommonPlayer),)
         super().__init__('reveal',
                          games=games,
                          requirements=requirements,
@@ -1377,7 +1378,7 @@ class Reveal(CommandType):
 
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game is not None
-        player: Player
+        player: CommonPlayer
 
         player = command.convert_arguments(
             self.args, game=command.game)[0]
@@ -1396,7 +1397,7 @@ class Swap(CommandType):
         help_text = 'Swap two players'
         requirements = Requirements(
             real_life_game_only=True)
-        args = (ArgType(Player), ArgType(Player))
+        args = (ArgType(CommonPlayer), ArgType(CommonPlayer))
         super().__init__('swap',
                          games=games,
                          requirements=requirements,
@@ -1407,8 +1408,8 @@ class Swap(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game is not None
 
-        source: Player
-        target: Player
+        source: CommonPlayer
+        target: CommonPlayer
 
         source, target = command.convert_arguments(
             self.args, game=command.game)

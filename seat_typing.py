@@ -3,12 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import typing
-from typing import cast
-
 import discord  # type: ignore
-
-# Seat = typing.NewType("Seat", int)
-PrivateNumber = typing.NewType("PrivateNumber", int)
 
 DiscordChannel = typing.Union[discord.TextChannel,
                               discord.DMChannel]
@@ -16,6 +11,59 @@ DiscordChannel = typing.Union[discord.TextChannel,
 
 class SeatException(Exception):
     pass
+
+
+# mypy-annotation-for-classmethod-returning-instance
+# https://stackoverflow.com/questions/44640479/
+
+GenF = typing.TypeVar('GenF', bound='Findable')
+
+
+class Findable:  # pylint: disable=too-few-public-methods
+    @classmethod
+    def find(cls: typing.Type[GenF],
+             search_key: str, **kwargs: typing.Any) -> GenF:
+        raise NotImplementedError('Virtual method matches.')
+
+
+class PrivateNumber(int):
+    def __add__(self, other: typing.Any) -> PrivateNumber:
+        return PrivateNumber(super().__add__(other))
+
+    def __sub__(self, other: typing.Any) -> PrivateNumber:
+        return PrivateNumber(super().__sub__(other))
+
+    def __mod__(self, other: typing.Any) -> PrivateNumber:
+        return PrivateNumber(super().__mod__(other))
+
+    @classmethod
+    def range(cls, end: int
+              ) -> typing.Generator[PrivateNumber, None, None]:
+        for i in range(end):
+            yield cls(i)
+
+
+class Seat(int):
+    def __str__(self) -> str:
+        return chr(ord('A') + self)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def __add__(self, other: typing.Any) -> Seat:
+        return Seat(super().__add__(other))
+
+    def __sub__(self, other: typing.Any) -> Seat:
+        return Seat(super().__sub__(other))
+
+    def __mod__(self, other: typing.Any) -> Seat:
+        return Seat(super().__mod__(other))
+
+    @classmethod
+    def range(cls, end: int
+              ) -> typing.Generator[Seat, None, None]:
+        for i in range(end):
+            yield cls(i)
 
 
 class SeatChannel:
@@ -83,17 +131,3 @@ class SeatChannel:
                 "function.\n"
                 "Please allow direct messages from server "
                 'members, under "Privacy Settings", for this server.')
-
-
-class Seat(int):
-    def __str__(self) -> str:
-        return chr(ord('A') + int(self))
-
-    def __add__(self, other: int) -> Seat:
-        return cast(Seat, super().__add__(other))
-
-    def __sub__(self, other: int) -> Seat:
-        return cast(Seat, super().__sub__(other))
-
-    def __mod__(self, other: int) -> Seat:
-        return cast(Seat, super().__mod__(other))

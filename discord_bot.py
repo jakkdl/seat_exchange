@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # pragma pylint: disable=missing-docstring
 from typing import Dict, List
 import datetime
@@ -278,23 +279,6 @@ class DiscordBot(discord.Client):  # type: ignore
 
     #     self.games[channel].stop()
     #     await channel.send('Game stopped.')
-
-    # async def _command_forceseatnumbers(self, _parameters: List[str],
-    #                                     _player: Player, channel):
-    #     if channel not in self.games:
-    #         raise DiscordBotException(
-    #             'No game running in this channel.')
-
-    #     game = self.games[channel].game
-    #     await channel.send('```Seat Number\n'
-    #                        '{}```'.format('\n'.join([
-    #                            '{seat:>3} {number:>3} {player}'.format(
-    #                                seat=Seat(seat),
-    #                                number=game.number_in_seat(Seat(seat)),
-    #                                player=game.player_in_seat(Seat(seat))
-    #                            )
-    #                            for seat in range(len(game.players))
-    #                        ])))
 
     # async def _command_kick(self, parameters, _author, channel):
     #     if channel not in self.games:
