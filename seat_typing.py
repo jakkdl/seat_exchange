@@ -17,6 +17,7 @@ class SeatException(Exception):
 # https://stackoverflow.com/questions/44640479/
 
 GenF = typing.TypeVar('GenF', bound='Findable')
+OWNER_ID = 84627464709472256
 
 
 class Findable:  # pylint: disable=too-few-public-methods
@@ -32,6 +33,12 @@ class PrivateNumber(int):
 
     def __sub__(self, other: typing.Any) -> PrivateNumber:
         return PrivateNumber(super().__sub__(other))
+
+    def __mul__(self, other: typing.Any) -> PrivateNumber:
+        return PrivateNumber(super().__mul__(other))
+
+    def __floordiv__(self, other: typing.Any) -> PrivateNumber:
+        return PrivateNumber(super().__floordiv__(other))
 
     def __mod__(self, other: typing.Any) -> PrivateNumber:
         return PrivateNumber(super().__mod__(other))
@@ -121,6 +128,7 @@ class SeatChannel:
                         sep: str = ' ',
                         start: str = '',
                         end: str = '') -> discord.Message:
+        # TODO: return wrapped message?
         try:
             return await self._channel.send(
                 start + sep.join(str(arg) for arg in args) + end)
@@ -131,3 +139,36 @@ class SeatChannel:
                 "function.\n"
                 "Please allow direct messages from server "
                 'members, under "Privacy Settings", for this server.')
+
+
+class DiscordUser:
+    """Wrapper around discord.User"""
+    def __init__(self, user: discord.User):
+        self.user = user
+        self.games: typing.List[typing.Any] = []  # TODO TODO TODO TODO
+
+    @property
+    def name(self) -> str:
+        return self.user.name  # type: ignore
+
+    @property
+    def discord_id(self) -> int:
+        return self.user.id  # type: ignore
+
+    @property
+    def display_name(self) -> str:
+        return self.user.display_name  # type: ignore
+
+    async def send(self, message: str) -> None:
+        await self.user.send(message)
+
+    @property
+    def is_admin(self) -> bool:
+        if self.user.id == OWNER_ID:
+            return True
+        if not isinstance(self.user, discord.Member):
+            return False
+        for role in self.user.roles:
+            if role.name.lower() == 'game admin':
+                return True
+        return False

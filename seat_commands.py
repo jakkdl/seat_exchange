@@ -1,4 +1,4 @@
-"""Heavily inspired by incnone's necrobot for racing crypt of the necrodancer.
+"""Command class system inspired by incnone's necrobot.
 """
 from __future__ import annotations
 
@@ -11,18 +11,20 @@ from dataclasses import dataclass
 
 import discord  # type: ignore
 
+import seat_strings
 import seat_typing
-import discord_game
-from discord_game import (DiscordGame, GameState,
-                          DiscordPlayer, BotPlayer, CommonPlayer)
+from discord_seat_game_subclasses import (CommonPlayer,
+                                          DiscordPlayer, BotPlayer)
+
+if typing.TYPE_CHECKING:
+    # pylint: disable=cyclic-import
+    import discord_game
+    from discord_game import DiscordGame, GameState
 # from player_game import Findable, Player, Proposal
 
-import strings
 
 OPTIONAL_STR = "Brackets around an argument means that it's optional."
-OWNER_ID = 84627464709472256
 REVEAL_TIME = 5
-
 GameDict = typing.Dict[discord.TextChannel, DiscordGame]
 
 
@@ -67,10 +69,11 @@ class ArgType:
 class CommandMessage:
     """Wrapper for discord.message"""
     def __init__(self, message: discord.message,
-                 channel: seat_typing.SeatChannel) -> None:
+                 channel: seat_typing.SeatChannel,
+                 author: seat_typing.DiscordUser) -> None:
         self._message = message
 
-        self.author: discord.User = message.author
+        self.author: seat_typing.DiscordUser = author
         self.channel = channel
         self.command: str = message.content.split(' ')[0][1:]
         self.args: List[Any] = message.content.split(' ')[1:]
@@ -80,17 +83,6 @@ class CommandMessage:
 
     def __str__(self) -> str:
         return self.command
-
-    @property
-    def author_is_admin(self) -> bool:
-        if self.author.id == OWNER_ID:
-            return True
-        if not isinstance(self.author, discord.Member):
-            return False
-        for role in self.author.roles:
-            if role.name.lower() == 'game admin':
-                return True
-        return False
 
     def convert_arguments(self,
                           arg_types: Sequence[ArgType],
@@ -180,14 +172,14 @@ class CommandType():
     def __init__(self,
                  command_name: str,
                  *command_names: str,
-                 games: Optional[GameDict] = None,
+                 game: Optional[DiscordGame] = None,
                  requirements: Requirements = Requirements(),
                  args: Sequence[ArgType] = (),
                  help_text: str = 'This command has no help text.',
                  tag: CommandTag
                  ) -> None:
         self.command_name_list = (command_name,) + command_names
-        self.games = games
+        self.game = game
         self.requirements = requirements
         self.args = args
         self.help_text = help_text
@@ -236,76 +228,44 @@ class CommandType():
         return key in self.command_name_list
 
     async def execute(self, command: CommandMessage) -> None:
-        if self.requirements.admin_only and not command.author_is_admin:
+        if self.requirements.admin_only and not command.author.is_admin:
             raise CommandException(self,
                                    'Called by non-admin {}'.format(
                                        command.author.display_name))
 
         self._validate_channel(command.channel)
 
-        if self.requirements.not_active_player and self.games:
-            for other_game in self.games.values():
-                if (command.author in other_game and other_game.state not in
+        if self.requirements.not_active_player:
+            for other_game in command.author.games:
+                if (other_game.state not in
                         (GameState.GAME_OVER, GameState.STOPPED)):
                     raise CommandException(
-                        self, 'You are a player in an active game.')
+                        self, 'You are a player in a different active game.')
 
         if not self.game_only:
             await self._do_execute(command)
             return
 
-        game = self._find_game(command)
+        assert self.game is not None
 
-        if not game:
+        if not self.game:
             raise CommandException(self, 'Found no game.')
 
-        self._validate_game_state(game.state)
+        self._validate_game_state(self.game.state)
 
-        command.game = game
+        command.game = self.game
 
         if not self.player_only:
             await self._do_execute(command)
             return
 
-        player = self._find_player(command.author)
-
-        if not player:
+        if command.author not in self.game:
             raise CommandException(self,
                                    'You are not a player in this game.')
 
-        if (player not in game and game.state not in
-                (GameState.GAME_OVER, GameState.STOPPED)):
-            raise CommandException(
-                self,
-                'You are already a player in a different active game')
-
-        command.player = player
+        command.player = self.game.discord_players[command.author]
 
         await self._do_execute(command)
-
-    def _find_game(self, command: CommandMessage) -> Optional[DiscordGame]:
-        assert self.games is not None
-
-        if command.channel.is_public:
-            if command.channel in self.games:
-                return self.games[command.channel]
-        else:
-            for game in self.games.values():
-                if command.author in game:
-                    return game
-        return None
-
-    def _find_player(self, author: discord.User,
-                     game: Optional[DiscordGame] = None
-                     ) -> Optional[DiscordPlayer]:
-        assert self.games is not None
-        if game:
-            if author in game:
-                return game.discord_players[author]
-        for other_game in self.games.values():
-            if author in other_game:
-                return other_game.discord_players[author]
-        return None
 
     def _validate_game_state(self, state: GameState) -> None:
         if state not in self.requirements.valid_game_states:
@@ -319,7 +279,7 @@ class CommandType():
 
 # Player commands
 class Ready(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             player_only=True,
             public_only=True,
@@ -330,7 +290,7 @@ class Ready(CommandType):
 
         super().__init__(
             'ready', 'r',
-            games=games,
+            game=game,
             requirements=requirements,
             help_text=help_text,
             tag=CommandTag.MANAGEMENT
@@ -346,7 +306,7 @@ class Ready(CommandType):
 
 
 class Unready(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = (
             'Indicates that you are no longer ready to begin the game. '
             'If the game is starting due to all players being ready, game '
@@ -357,7 +317,7 @@ class Unready(CommandType):
             valid_game_states=[GameState.CREATED,
                                GameState.STARTING])
         super().__init__('unready',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT
@@ -374,7 +334,7 @@ class Unready(CommandType):
 
 
 class ProposeSeatSwap(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = (
             'Propose a seat swap with another player, optionally bundling '
             'a bribe of garnets.')
@@ -385,7 +345,7 @@ class ProposeSeatSwap(CommandType):
         args = (ArgType(CommonPlayer),
                 ArgType(int, optional=True, defaultvalue=0))
         super().__init__('propose',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -424,7 +384,7 @@ class ProposeSeatSwap(CommandType):
 
 
 class AcceptSeatSwap(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = (
             'Accept an incoming proposal. If you have multiple proposals you '
             'must specify from which player the proposal is.')
@@ -434,7 +394,7 @@ class AcceptSeatSwap(CommandType):
             valid_game_states=(GameState.RUNNING,))
         args = (ArgType(discord_game.Proposal, optional=True),)  # TODO
         super().__init__('accept', 'acceptproposal', 'acceptincoming',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -499,7 +459,7 @@ class AcceptSeatSwap(CommandType):
 
 
 class CancelSeatSwap(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = (
             'Cancel a proposal. If you have multiple proposals you '
             'must specify with which player the proposal is.')
@@ -510,7 +470,7 @@ class CancelSeatSwap(CommandType):
         args = (ArgType(discord_game.Proposal, optional=True),)
         super().__init__('cancel', 'reject',
                          'cancelproposal', 'rejectproposal',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -549,7 +509,7 @@ class CancelSeatSwap(CommandType):
 
 
 class CreateBotSwap(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = (
             'Propose a seat swap between two bots, optionally bundling '
             'a bribe of garnets. Your bribe must be higher than either bots '
@@ -568,7 +528,7 @@ class CreateBotSwap(CommandType):
                 ArgType(BotPlayer),
                 ArgType(int, optional=True, defaultvalue=0))
         super().__init__('botswap', 'proposebotswap',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -603,7 +563,7 @@ class CreateBotSwap(CommandType):
 
 
 class CancelBotSwap(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'Cancel a proposed seat swap between two bots'
         requirements = Requirements(
             player_only=True,
@@ -612,7 +572,7 @@ class CancelBotSwap(CommandType):
         args = (ArgType(BotPlayer),
                 ArgType(BotPlayer))
         super().__init__('cancelbotswap',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -642,7 +602,7 @@ class CancelBotSwap(CommandType):
 
 
 class DonateGarnets(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = (
             'Donate a number of garnets to a player.')
         requirements = Requirements(
@@ -652,7 +612,7 @@ class DonateGarnets(CommandType):
         args = (ArgType(CommonPlayer),
                 ArgType(int))
         super().__init__('donate', 'donategarnets',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -685,14 +645,14 @@ class DonateGarnets(CommandType):
 
 # Game info
 class PrintProposals(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'List all your incoming and outgoing proposals.'
         requirements = Requirements(
             player_only=True,
             private_only=True,
             valid_game_states=(GameState.RUNNING, GameState.PAUSED))
         super().__init__('proposals',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.GAMEPLAY)
@@ -714,14 +674,14 @@ class PrintProposals(CommandType):
 
 
 class PrintBotSwaps(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'Print all botswaps sponsored by you.'
         requirements = Requirements(
             player_only=True,
             private_only=True,
             valid_game_states=[GameState.RUNNING])
         super().__init__('botswaps', 'printbotswaps',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.GAMEPLAY)
@@ -739,12 +699,12 @@ class PrintBotSwaps(CommandType):
 
 
 class PrintPlayers(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True)
         help_text = ('List players that have joined.')
         super().__init__('players', 'listplayers',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.GAMEPLAY)
@@ -760,13 +720,13 @@ class PrintPlayers(CommandType):
 
 
 class PrintGarnets(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True,
             player_only=True)
         help_text = ('Print how many garnets you have.')
         super().__init__('garnets', 'printgarnets', 'garnet',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.GAMEPLAY)
@@ -778,17 +738,17 @@ class PrintGarnets(CommandType):
 
 
 class PrintSeating(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True,
             player_only=True,
             valid_game_states=[GameState.RUNNING,
-                              GameState.PAUSED,
-                              GameState.GAME_OVER,
-                              GameState.STOPPED])
+                               GameState.PAUSED,
+                               GameState.GAME_OVER,
+                               GameState.STOPPED])
         help_text = ('Print seat and assigned numbers for all players.')
         super().__init__('seating', 'printseating',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.GAMEPLAY)
@@ -811,7 +771,7 @@ class PrintSeating(CommandType):
 
 
 class AssignNumber(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True,
             player_only=True)
@@ -820,7 +780,7 @@ class AssignNumber(CommandType):
         args = (ArgType(CommonPlayer),
                 ArgType(int))
         super().__init__('assign', 'assignnumber',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -842,7 +802,7 @@ class AssignNumber(CommandType):
 
 
 class UnassignNumber(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True,
             player_only=True)
@@ -850,7 +810,7 @@ class UnassignNumber(CommandType):
                      'For use with `!seating`')
         args = (ArgType(CommonPlayer),)
         super().__init__('unassign', 'unassignnumber',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -869,22 +829,42 @@ class UnassignNumber(CommandType):
 
 
 # Game management commands
+class CreateRealLifeGame(CommandType):
+    def __init__(self, games: GameDict) -> None:
+        help_text = 'Create an IRL game.'
+        requirements = Requirements(
+            public_only=True)
+        super().__init__('createirl',
+                         requirements=requirements,
+                         help_text=help_text,
+                         tag=CommandTag.REALLIFE)
+        self.games = games
+
+    async def _do_execute(self, command: CommandMessage) -> None:
+        for other_game in self.games:
+            if other_game.channel == command.channel:
+                raise CommandException(self, 'game already running.')
+
+        game = DiscordGame(command.channel, {})
+        self.games[command.channel] = game
+        await game.send('Real-life game created.')
+
+
 class Create(CommandType):
     def __init__(self, games: GameDict) -> None:
         requirements = Requirements(
             public_only=True)
         help_text = ('Creates a seat game.')
         super().__init__('create',
-                         games=games,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT)
+        self.games = games
 
     async def _do_execute(self, command: CommandMessage) -> None:
-        assert self.games is not None
-
-        if self._find_game(command):
-            raise CommandException(self, 'game already running.')
+        for other_game in self.games:
+            if other_game.channel == command.channel:
+                raise CommandException(self, 'game already running.')
 
         game = DiscordGame(command.channel, {})
         self.games[command.channel] = game
@@ -896,7 +876,7 @@ class Create(CommandType):
 
 
 class Recreate(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             public_only=True,
             game_only=True,
@@ -905,24 +885,22 @@ class Recreate(CommandType):
                 GameState.STOPPED))
         help_text = ("Recreates a finished game with the same options.")
         super().__init__('recreate',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT)
 
     async def _do_execute(self, command: CommandMessage) -> None:
-        assert self.games is not None
         assert command.game
 
-        game = DiscordGame(command.channel, command.game.options)
-        self.games[command.channel] = game
-        await game.send(
+        command.game.recreate()
+        await command.game.send(
             'Game recreated with the same options. Game will start when all '
             'players are `!ready`.')
 
 
 class Join(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             public_only=True,
             game_only=True,
@@ -932,7 +910,7 @@ class Join(CommandType):
                 GameState.STARTING))
         help_text = 'Join a created game.'
         super().__init__('join',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT)
@@ -949,16 +927,15 @@ class CreateJoin(CommandType):
             not_active_player=True)
         help_text = ('Creates and joins a game if there is none.')
         super().__init__('createjoin', 'join',
-                         games=games,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT)
+        self.games = games
 
     async def _do_execute(self, command: CommandMessage) -> None:
-        assert self.games is not None
-
-        if self._find_game(command):
-            raise CommandException(self, 'game already running.')
+        for other_game in self.games:
+            if other_game.channel == command.channel:
+                raise CommandException(self, 'game already running.')
 
         game = DiscordGame(command.channel, {})
         self.games[command.channel] = game
@@ -968,7 +945,7 @@ class CreateJoin(CommandType):
 
 
 class RecreateJoin(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             public_only=True,
             game_only=True,
@@ -978,32 +955,30 @@ class RecreateJoin(CommandType):
                 GameState.STOPPED))
         help_text = ("Recreates a finished game and joins it.")
         super().__init__('recreatejoin', 'join',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT)
 
     async def _do_execute(self, command: CommandMessage) -> None:
-        assert self.games is not None
         assert command.game
 
-        game = DiscordGame(command.channel, command.game.options)
-        self.games[command.channel] = game
-        await game.add_user(command.author)
-        await game.send(
+        command.game.recreate()
+        await command.game.add_user(command.author)
+        await command.game.send(
             'Game recreated with the same options. Game will start when all '
             'players are `!ready`.')
 
 
 class Leave(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'Leave a game. Cannot leave a game in progress.'
         requirements = Requirements(
             player_only=True,
             valid_game_states=[GameState.CREATED,
                                GameState.STARTING])
         super().__init__('leave',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.MANAGEMENT)
@@ -1016,7 +991,7 @@ class Leave(CommandType):
 
 
 class AddBot(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True,
             public_only=True,
@@ -1024,7 +999,7 @@ class AddBot(CommandType):
         args = (ArgType(str, name='name'),)
         help_text = ('Add a bot with the specified name to the game.')
         super().__init__('addbot', 'ab',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1043,7 +1018,7 @@ class AddBot(CommandType):
 
 
 class RemoveBot(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             game_only=True,
             public_only=True,
@@ -1051,7 +1026,7 @@ class RemoveBot(CommandType):
         args = (ArgType(BotPlayer),)
         help_text = ('Remove the specified bot from the game.')
         super().__init__('removebot',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1065,14 +1040,14 @@ class RemoveBot(CommandType):
 
 
 class RoundLength(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = ('Print or set the round length.')
         args = (ArgType(int, optional=True),)
         requirements = Requirements(
             public_only=True,
             game_only=True)
         super().__init__('roundlength',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1096,14 +1071,14 @@ class RoundLength(CommandType):
 
 
 class StreakLength(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = ('Print or set the streak length.')
         args = (ArgType(int, optional=True),)
         requirements = Requirements(
             public_only=True,
             game_only=True)
         super().__init__('streaklength',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1127,14 +1102,14 @@ class StreakLength(CommandType):
 
 
 class XCount(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = ('Print or set the X count.')
         args = (ArgType(int, optional=True),)
         requirements = Requirements(
             public_only=True,
             game_only=True)
         super().__init__('xcount', 'x_count',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1158,7 +1133,7 @@ class XCount(CommandType):
 
 
 class RevealLongestStreak(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = ('Print or set whether the longest streak is revealed at '
                      'the beginning of each round.')
         args = (ArgType(str, name='bool', optional=True),)
@@ -1166,7 +1141,7 @@ class RevealLongestStreak(CommandType):
             public_only=True,
             game_only=True)
         super().__init__('reveallongeststreak', 'revealstreak',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1244,7 +1219,7 @@ class Help(CommandType):
         print('{} called help {}'.format(command.author, key))
 
         if not key:
-            await user_channel.send(strings.HELP_HELP)
+            await user_channel.send(seat_strings.HELP_HELP)
             return
 
         key = key.lower().lstrip('!').rstrip('.')
@@ -1297,16 +1272,16 @@ class Rules(CommandType):
         print('{} called rules {}'.format(command.author, key))
 
         if not key:
-            await user_channel.send(strings.RULES_INDEX)
+            await user_channel.send(seat_strings.RULES_INDEX)
             return
 
         key = key.lower().rstrip('.')
 
-        if key not in strings.RULES_DICT:
+        if key not in seat_strings.RULES_DICT:
             raise CommandException(
                 self, "Unknown rules section `{}`.".format(key))
 
-        await user_channel.send(strings.RULES_DICT[key])
+        await user_channel.send(seat_strings.RULES_DICT[key])
 
 
 class Commands(CommandType):
@@ -1340,37 +1315,17 @@ class Source(CommandType):
 
 
 # RealLifeGame commands
-class CreateRealLifeGame(CommandType):
-    def __init__(self, games: GameDict) -> None:
-        help_text = 'Create an IRL game.'
-        requirements = Requirements(
-            public_only=True)
-        super().__init__('createirl',
-                         games=games,
-                         requirements=requirements,
-                         help_text=help_text,
-                         tag=CommandTag.REALLIFE)
-
-    async def _do_execute(self, command: CommandMessage) -> None:
-        assert self.games is not None
-
-        if self._find_game(command):
-            raise CommandException(self, 'game already running.')
-
-        game = DiscordGame(command.channel, {})
-        self.games[command.channel] = game
-        await game.send('Real-life game created.')
 
 
 class Reveal(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = ('Reveal the private number of a real-life player '
                      'for {} seconds.'.format(REVEAL_TIME))
         requirements = Requirements(
             real_life_game_only=True)
         args = (ArgType(CommonPlayer),)
         super().__init__('reveal',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1393,13 +1348,13 @@ class Reveal(CommandType):
 
 
 class Swap(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'Swap two players'
         requirements = Requirements(
             real_life_game_only=True)
         args = (ArgType(CommonPlayer), ArgType(CommonPlayer))
         super().__init__('swap',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1420,12 +1375,12 @@ class Swap(CommandType):
 
 
 class RealLifeSeating(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'Reveal seating of all the players.'
         requirements = Requirements(
             real_life_game_only=True)
         super().__init__('seating',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.REALLIFE)
@@ -1459,14 +1414,14 @@ class Shutdown(CommandType):
 
 
 class ForceStart(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         requirements = Requirements(
             public_only=True,
             admin_only=True,
             valid_game_states=(GameState.CREATED,))
         help_text = 'Start a game, regardless of ready state of players.'
         super().__init__('forcestart',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.ADMIN)
@@ -1477,7 +1432,7 @@ class ForceStart(CommandType):
 
 
 class ForceStop(CommandType):
-    def __init__(self, games: GameDict):
+    def __init__(self, game: DiscordGame):
         help_text = ('Stops game.')
         requirements = Requirements(
             public_only=True,
@@ -1487,7 +1442,7 @@ class ForceStop(CommandType):
             #                    GameState.PAUSED)
         )
         super().__init__('forcestop',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.ADMIN)
@@ -1500,14 +1455,14 @@ class ForceStop(CommandType):
 
 
 class ForceSwap(CommandType):
-    def __init__(self, games: GameDict) -> None:
-        help_text = 'Swap two players, even if they\`ve already swapped.'
+    def __init__(self, game: DiscordGame) -> None:
+        help_text = 'Swap two players, even if they\'ve already swapped.'
         requirements = Requirements(
             game_only=True,
             admin_only=True)
-        args = (ArgType(Player), ArgType(Player))
+        args = (ArgType(CommonPlayer), ArgType(CommonPlayer))
         super().__init__('forceswap',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          args=args,
                          help_text=help_text,
@@ -1516,8 +1471,8 @@ class ForceSwap(CommandType):
     async def _do_execute(self, command: CommandMessage) -> None:
         assert command.game is not None
 
-        source: Player
-        target: Player
+        source: CommonPlayer
+        target: CommonPlayer
 
         source, target = command.convert_arguments(
             self.args, game=command.game)
@@ -1528,7 +1483,7 @@ class ForceSwap(CommandType):
 
 
 class ForceNewRound(CommandType):
-    def __init__(self, games: GameDict):
+    def __init__(self, game: DiscordGame):
         help_text = ('Forces next round to start.')
         requirements = Requirements(
             public_only=True,
@@ -1536,7 +1491,7 @@ class ForceNewRound(CommandType):
             admin_only=True,
             valid_game_states=(GameState.RUNNING,))
         super().__init__('forcenewround', 'newround',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.ADMIN)
@@ -1548,13 +1503,13 @@ class ForceNewRound(CommandType):
 
 
 class ForceSeatNumbers(CommandType):
-    def __init__(self, games: GameDict) -> None:
+    def __init__(self, game: DiscordGame) -> None:
         help_text = 'Reveal seating and numbers of all the players.'
         requirements = Requirements(
             admin_only=True,
             game_only=True)
         super().__init__('forceseatnumbers',
-                         games=games,
+                         game=game,
                          requirements=requirements,
                          help_text=help_text,
                          tag=CommandTag.ADMIN)

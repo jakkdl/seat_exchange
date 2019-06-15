@@ -101,6 +101,12 @@ class SeatGame(typing.Generic[GenP]):
         self.current_x: List[PrivateNumber] = []
         self.__cached_streak_result: Optional[StreakResult] = None
 
+    def recreate(self) -> None:
+        self.current_round = 1
+        self.players.clear()
+        self.current_x.clear()
+        self.__cached_streak_result = None
+
     @property
     def x_count(self) -> int:
         if 'x_count' in self._options:
@@ -146,7 +152,7 @@ class SeatGame(typing.Generic[GenP]):
 
         # Divide the series of numbers into x_count parts, take the beginning
         # of each part and offset by number of rounds-1, mod player count
-        for i in range(self.x_count):
+        for i in PrivateNumber.range(self.x_count):
             res.append(
                 (
                     (i*self.player_count)//self.x_count
@@ -193,7 +199,7 @@ class SeatGame(typing.Generic[GenP]):
 
                 self.players.append(player)
 
-                self.current_x = self._init_x()
+                self.current_x = self.init_x()
                 self.__cached_streak_result = None
 
                 if self.longest_streak == 2 or len(self.players) < 4:

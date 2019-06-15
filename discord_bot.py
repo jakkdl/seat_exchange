@@ -9,19 +9,13 @@ from discord_game import DiscordGame
 
 import seat_commands as commands
 
-from seat_typing import SeatException, SeatChannel
+from seat_typing import SeatException, SeatChannel, DiscordUser
 
 # TODO: police nickname changes
 
 
 class DiscordBotException(SeatException):
     pass
-
-
-class DiscordUser():
-    """Wrapper around discord.User"""
-    def __init__(user: discord.User):
-        self.user = user
 
 
 class DiscordBot(discord.Client):  # type: ignore
@@ -49,6 +43,8 @@ class DiscordBot(discord.Client):  # type: ignore
             commands.Shutdown(self),
         ]
 
+        # TODO
+        # pylint: disable=duplicate-code
         for command in self.command_list:
             for command_name in command.command_name_list:
                 if command_name not in self.command_dict:
@@ -65,6 +61,20 @@ class DiscordBot(discord.Client):  # type: ignore
         #             await channel.send('Seat Exchange Bot v0.1')
 
     async def on_message(self, message: discord.message) -> None:
+        async def run_command(command_list: List[commands.CommandType],
+                              command_message: commands.CommandMessage
+                              ) -> None:
+            errors = []
+            for matching_command in command_list:
+                try:
+                    await matching_command.execute(command_message)
+                    return
+                except SeatException as error:
+                    errors.append(error)
+            print(errors)
+            await command_message.channel.send(
+                '\n'.join(str(x) for x in errors))
+
         if message.author == self.user:
             return
 
@@ -78,28 +88,37 @@ class DiscordBot(discord.Client):  # type: ignore
             self.users[message.author] = DiscordUser(message.author)
         user = self.users[message.author]
         # parameters = message.content.split(' ')[1:]
+        command_message = commands.CommandMessage(
+            message, channel, user)
 
-        if command in self.command_dict:
-            command_message = commands.CommandMessage(
-                message, channel, user)
-            errors = []
-            for matching_command in self.command_dict[command]:
-                try:
-                    await matching_command.execute(command_message)
-                    return
-                except SeatException as error:
-                    errors.append(error)
-            print(errors)
-            await message.channel.send('\n'.join(str(x) for x in errors))
+        game = None
+
+        if channel in self.games:
+            game = self.games[channel]
+        else:
+            for player_game in user.games:
+                if player_game.channel == channel:
+                    game = player_game
+
+        if game and command in game.command_dict:
+            await run_command(game.command_dict[command], command_message)
+        elif command in self.command_dict:
+            await run_command(self.command_dict[command], command_message)
 
     async def on_reaction_add(self,
                               reaction: discord.Reaction,
-                              user: discord.User) -> None:
+                              discord_user: discord.User) -> None:
         message = reaction.message
         channel = SeatChannel(message.channel)
 
         if channel not in self.games:
             return
+
+        if discord_user in self.users:
+            user = self.users[discord_user]
+        else:
+            user = DiscordUser(discord_user)
+            self.users[discord_user] = user
 
         game = self.games[channel]
 
