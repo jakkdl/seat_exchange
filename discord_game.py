@@ -5,7 +5,6 @@ import random
 import asyncio
 import math
 
-from enum import Enum, auto
 import typing
 from typing import Dict, Optional, Any, cast
 
@@ -15,7 +14,7 @@ import discord  # type: ignore
 import seat_strings
 import seat_commands as commands
 from seat_game import SeatGame
-from seat_typing import (SeatException, SeatChannel, DiscordUser)
+from seat_typing import (SeatException, SeatChannel, DiscordUser, GameState)
 from discord_seat_game_subclasses import (
     CommonPlayer, DiscordPlayer, BotPlayer, Proposal, BotSwap, CP,
     ListProposals)
@@ -29,26 +28,6 @@ MIN_PLAYERS = 2
 
 class DiscordGameException(SeatException):
     pass
-
-
-class GameState(Enum):
-    CREATED = auto()
-    STARTING = auto()
-    RUNNING = auto()
-    PAUSED = auto()
-    GAME_OVER = auto()
-    STOPPED = auto()
-
-    def __str__(self) -> str:
-        state_strs = {
-            GameState.CREATED: 'newly created',
-            GameState.STARTING: 'starting',
-            GameState.RUNNING: 'running',
-            GameState.PAUSED: 'paused',
-            GameState.GAME_OVER: 'finished',
-            GameState.STOPPED: 'stopped',
-        }
-        return state_strs[self]
 
 
 class ReactFunction:  # pylint: disable=too-few-public-methods

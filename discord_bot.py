@@ -22,7 +22,7 @@ class DiscordBot(discord.Client):  # type: ignore
     def __init__(self) -> None:
         super().__init__()
         self.games: Dict[SeatChannel, DiscordGame] = {}
-        self.users: Dict[discord.user, DiscordUser] = {}
+        self._users: Dict[discord.user, DiscordUser] = {}
 
         self.command_list: List[commands.CommandType] = []
         self.command_dict: Dict[str, List[commands.CommandType]] = {}
@@ -84,9 +84,9 @@ class DiscordBot(discord.Client):  # type: ignore
         command = message.content.split(' ')[0][1:]
         channel = SeatChannel(message.channel)
 
-        if message.author not in self.users:
-            self.users[message.author] = DiscordUser(message.author)
-        user = self.users[message.author]
+        if message.author not in self._users:
+            self._users[message.author] = DiscordUser(message.author)
+        user = self._users[message.author]
         # parameters = message.content.split(' ')[1:]
         command_message = commands.CommandMessage(
             message, channel, user)
@@ -114,11 +114,11 @@ class DiscordBot(discord.Client):  # type: ignore
         if channel not in self.games:
             return
 
-        if discord_user in self.users:
-            user = self.users[discord_user]
+        if discord_user in self._users:
+            user = self._users[discord_user]
         else:
             user = DiscordUser(discord_user)
-            self.users[discord_user] = user
+            self._users[discord_user] = user
 
         game = self.games[channel]
 

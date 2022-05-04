@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import typing
+
+from enum import Enum, auto
 import discord  # type: ignore
 
 DiscordChannel = typing.Union[discord.TextChannel,
@@ -73,6 +75,26 @@ class Seat(int):
             yield cls(i)
 
 
+class GameState(Enum):
+    CREATED = auto()
+    STARTING = auto()
+    RUNNING = auto()
+    PAUSED = auto()
+    GAME_OVER = auto()
+    STOPPED = auto()
+
+    def __str__(self) -> str:
+        state_strs = {
+            GameState.CREATED: 'newly created',
+            GameState.STARTING: 'starting',
+            GameState.RUNNING: 'running',
+            GameState.PAUSED: 'paused',
+            GameState.GAME_OVER: 'finished',
+            GameState.STOPPED: 'stopped',
+        }
+        return state_strs[self]
+
+
 class SeatChannel:
     def __init__(self,
                  channel: DiscordChannel):
@@ -81,11 +103,11 @@ class SeatChannel:
         self.is_dm = isinstance(channel, discord.DMChannel)
 
     @classmethod
-    async def from_user(cls, user: discord.User) -> SeatChannel:
-        if user.dm_channel is None:
-            await user.create_dm()
+    async def from_user(cls, user: DiscordUser) -> SeatChannel:
+        if user.user.dm_channel is None:
+            await user.user.create_dm()
 
-        return SeatChannel(user.dm_channel)
+        return SeatChannel(user.user.dm_channel)
 
     def __str__(self) -> str:
         return str(self._channel)
@@ -146,6 +168,9 @@ class DiscordUser:
     def __init__(self, user: discord.User):
         self.user = user
         self.games: typing.List[typing.Any] = []  # TODO TODO TODO TODO
+
+    def __str__() -> str:
+        return self.user.__str__  # type: ignore
 
     @property
     def name(self) -> str:

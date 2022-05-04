@@ -13,19 +13,20 @@ import discord  # type: ignore
 
 import seat_strings
 import seat_typing
+from seat_typing import GameState
 from discord_seat_game_subclasses import (CommonPlayer,
                                           DiscordPlayer, BotPlayer)
 
 if typing.TYPE_CHECKING:
     # pylint: disable=cyclic-import
     import discord_game
-    from discord_game import DiscordGame, GameState
+    from discord_game import DiscordGame
+    GameDict = typing.Dict[discord.TextChannel, DiscordGame]
 # from player_game import Findable, Player, Proposal
 
 
 OPTIONAL_STR = "Brackets around an argument means that it's optional."
 REVEAL_TIME = 5
-GameDict = typing.Dict[discord.TextChannel, DiscordGame]
 
 
 class CommandException(seat_typing.SeatException):
