@@ -1217,7 +1217,7 @@ class Help(CommandType):
 
         key: Optional[str] = command.convert_arguments(self.args)[0]
 
-        print('{} called help {}'.format(command.author, key))
+        #print(f'{command.author} called help {key}')
 
         if not key:
             await user_channel.send(seat_strings.HELP_HELP)
@@ -1270,7 +1270,7 @@ class Rules(CommandType):
         user_channel = await seat_typing.SeatChannel.from_user(command.author)
         key: Optional[str] = command.convert_arguments(self.args)[0]
 
-        print('{} called rules {}'.format(command.author, key))
+        #print('{} called rules {}'.format(command.author, key))
 
         if not key:
             await user_channel.send(seat_strings.RULES_INDEX)
