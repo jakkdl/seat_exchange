@@ -135,7 +135,7 @@ By default number 0 is designated as X in the first round, and it
 increases each round.  
 The player holding a number currently designated as X cannot form any 
 streak, and if the game ends while they're X they will lose garnets, 
-by default {}.  
+by default 10.  
 X has some special properties when calculating streaks:  
 When calculating which numbers are adjacent and can form a streak, the 
 number[s] that are X are skipped. So if the number 3 is X, 1-2-4-5 is 
@@ -146,9 +146,9 @@ So as X you desperately do not want the round to end, and should try to
 seat yourself and others (with bribes) such that the round does not end.
 
 ## `!rules show`
-The rules for the Genius version can be found at (wikipedia)[https://en.wikipedia.org/wiki/The_Genius:_Rule_Breaker#Episode_2:_Seat_Exchange_(12_Contestants)]  
-The first season is on (youtube)[https://youtu.be/jpwIgWPfNvc] and subsequencent 
-seasons can be found at (reddit)[https://www.reddit.com/r/TheGenius/comments/70jog1/links_to_all_subbed_episodes_of_the_genius_s14/]  
+The rules for the Genius version can be found at [wikipedia](https://en.wikipedia.org/wiki/The_Genius:_Rule_Breaker#Episode_2:_Seat_Exchange_(12_Contestants))  
+The first season is on [youtube](https://youtu.be/jpwIgWPfNvc) and subsequencent 
+seasons can be found at [reddit](https://www.reddit.com/r/TheGenius/comments/70jog1/links_to_all_subbed_episodes_of_the_genius_s14/)  
 This game is played in season 2 episode 4, but the second season spoils 
 the results from season 1, so I recommend starting from the beginning.  
 It is a very good show!!  
@@ -168,18 +168,14 @@ primarily about garnets. You can read more about that system under
 `!rules garnets`.  
 I have also, quite obviously, had to adapt the game to work for 
 different amounts of people. Currently the default algorithm is the 
-required streak length being (player_count-1)/2 rounded down above 
-player counts of 8. With lower counts having numbers I've tried to 
+required streak length being `(player_count-1)/2`, rounded down above 
+player counts of 8, with lower counts having numbers I've tried to 
 figure out or playtested.  
 There also needs to be at least 6 players to have an assigned X, 
 and there is support for more than one X but I have yet to decide 
 at which player counts that should start.  
 Another difference is the addition of bots, you can read more about 
-those under `!rules bots`.  ".format(
-        wikipedia_url=WIKIPEDIA_URL,
-        youtube_url=YOUTUBE_URL,
-        reddit_url=REDDIT_URL)
-)
+those under `!rules bots`.
 
 ## `!rules bots`
 To make the game playable with fewer human players, I've added a system 
@@ -193,9 +189,8 @@ Their discord gameplaye differs significantly though, and their
 behaivour is not fully decided yet and may very well change going 
 forward.  
 In their current implementation you can bribe a bot 
-{} garnets to have them DM you their secret number, 
-you can propose swaps with them, and you can arrange so called "bot '
-swaps".  '
+1 garnet(s) to have them DM you their secret number, 
+you can propose swaps with them, and you can arrange so called "bot swaps".  
 Proposing a seat swap with a bot is done just like normal with 
 `!propose`, and if nobody else proposes a swap with them they will 
 always accept. If several people propose a swap the bot will accept 
