@@ -8,7 +8,7 @@ through direct messages.
 Add a command as parameter to `!help` see its help text. 
 E.g. `!help help`.
 
-## !rules
+## `!rules`
 The rules pages are divided into a number of sections.  
 To view a specific section type `!rules section`, e.g `!rules index` 
 to view this text.  
@@ -24,7 +24,7 @@ their rules differ from this implementation and why.
 Do also check out the `!help` for different commands for more 
 detailed explanations on specific commands.
 
-## !rules overview
+## `!rules overview`
 This game is based on a game from the korean reality/game show 
 The Genius.  
 Each player is imagined to be sitting in a circle, on seats named 
@@ -49,7 +49,7 @@ Once each round you may swap seats with another player, this is made
 by sending them a "proposal", which they have to accept.  
 See the sections listed under `!rules index` for more detailed rules.
 
-## !rules gameplay
+## `!rules gameplay`
 Much of the gameplay will take place in direct messages, where you 
 DM other players, bribe or swap info with them to figure out where 
 the numbers are, and then find players holding adjacent numbers to 
@@ -78,7 +78,7 @@ other people, give info, or other things, but this is not binding
 and they *can* break any such arrangements. Do not let that overly 
 hinder your creativity though!
 
-## !rules streak
+## `!rules streak`
 Achieving a streak is the main way to win the game, as it's the main 
 source of garnets, and the creation of one is also what ends the game.  
 To form a streak, players holding consecutive numbers must sit in order 
@@ -105,7 +105,7 @@ We finish with a few examples, we list the numbers in seat order.
 `3, 2, 1, 4, 5` x=4 -> streak of 4 (5, 3, 2, 1)  
 `3, 2, 1, 4, 5, 6, 7` x=4 -> two streaks of 3 (3, 2, 1) and (5, 6, 7)
 
-## !rules garnets
+## `!rules garnets`
 Each player starts the game with 20 garnets, which 
 is the currency as well as the ultimate objective of the game.  
 These should be used as bribes during the course of the game when 
@@ -145,10 +145,10 @@ seating is 1-2-X-4-5 that is two streaks of 2.
 So as X you desperately do not want the round to end, and should try to 
 seat yourself and others (with bribes) such that the round does not end.
 
-## !rules show
-The rules for the Genius version can be found at <{wikipedia_url}>  
-The first season is on youtube at {youtube_url} and subsequencent 
-seasons can be found at <{reddit_url}>.  
+## `!rules show`
+The rules for the Genius version can be found at (wikipedia)[https://en.wikipedia.org/wiki/The_Genius:_Rule_Breaker#Episode_2:_Seat_Exchange_(12_Contestants)]  
+The first season is on (youtube)[https://youtu.be/jpwIgWPfNvc] and subsequencent 
+seasons can be found at (reddit)[https://www.reddit.com/r/TheGenius/comments/70jog1/links_to_all_subbed_episodes_of_the_genius_s14/]  
 This game is played in season 2 episode 4, but the second season spoils 
 the results from season 1, so I recommend starting from the beginning.  
 It is a very good show!!  
@@ -181,7 +181,7 @@ those under `!rules bots`.  ".format(
         reddit_url=REDDIT_URL)
 )
 
-## !rules bots
+## `!rules bots`
 To make the game playable with fewer human players, I've added a system 
 with simple bots that players can jockey over controlling.  
 To add a bot to the game you use the `!addbot` command, and to remove 
@@ -206,4 +206,3 @@ these it was a big ordeal to make two bots switch places, so this
 was added as a separate command after testing.  
 These can also be used to bribe a bot not to swap.  
 Details on how botswaps work is found under `!help botswap`.  
-".format(DEFAULT_OPTIONS['garnet_reveal_bribe'])
